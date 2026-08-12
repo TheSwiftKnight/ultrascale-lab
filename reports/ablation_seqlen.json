@@ -1,0 +1,34 @@
+[
+  {
+    "label": "seq=512",
+    "status": "dry_run",
+    "max_seq_length": 512,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  },
+  {
+    "label": "seq=1024",
+    "status": "dry_run",
+    "max_seq_length": 1024,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  },
+  {
+    "label": "seq=2048",
+    "status": "dry_run",
+    "max_seq_length": 2048,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  },
+  {
+    "label": "seq=4096",
+    "status": "dry_run",
+    "max_seq_length": 4096,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  }
+]

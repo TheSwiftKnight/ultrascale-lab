@@ -1,0 +1,96 @@
+# mlx_lm.lora — Gemma 4 12B（dense）本機 LoRA 微調主線
+#
+# 跑法：
+#   source .venv/bin/activate
+#   mlx_lm.lora --config configs/lora_gemma4_12b.yaml
+#
+# 恢復訓練（中斷後）：
+#   mlx_lm.lora --config configs/lora_gemma4_12b.yaml \
+#               --resume-adapter-file out/lora-12b/adapters.safetensors
+#
+# 訓練完融合成完整權重（評測與路由分析要用）：
+#   mlx_lm.fuse --model mlx-community/gemma-4-12B-it-4bit \
+#               --adapter-path out/lora-12b \
+#               --save-path out/gemma4-12b-tw
+#
+# ⚠️ 記憶體預算（predict_memory_gemma.py --model gemma4-12b --seq 2048 --bs 1）
+#     4-bit 權重 5.9 + LoRA 0.32 + 活化(ckpt) 1.03 + logits 3.00 + 開銷 1.0 = 11.2 GiB ✅
+#
+#     ⚠️ 活化與 logits 都隨 batch_size 線性成長，Gemma 的 262K vocab 讓 logits 特別貴：
+#
+#       seq   bs  ckpt   活化   logits   合計
+#        512   1   off   3.76    0.75   11.7 GiB  ✅（消融用）
+#       2048   1   on    1.03    3.00   11.2 GiB  ✅ ← 本檔預設
+#       2048   2   on    2.06    6.00   15.3 GiB  ⚠️ 貼邊但可跑
+#       2048   4   on    4.12   12.00   23.3 GiB  ❌ OOM
+#       2048   1   off  15.05    3.00   25.3 GiB  ❌ OOM
+#       4096   1   on    2.06    6.00   15.3 GiB  ⚠️
+#
+#     結論：24GB 機器上 **bs 只能是 1（最多 2）、梯度檢查點必開**。
+#     這不是保守，是算出來的 —— 而「不開檢查點就 OOM」本身就是 H3 的一半答案。
+
+model: "mlx-community/gemma-4-12B-it-4bit"
+train: true
+
+# prepare_data_gemma.py 的輸出目錄（裡面要有 train.jsonl 與 valid.jsonl）
+data: "data/mlx"
+
+seed: 42
+
+# LoRA 掛在最上面幾層。-1 = 全部 48 層。
+# 可訓練參數（attention only, r=16）：4 層≈1.8M / 16 層≈7.1M / 48 層≈21.3M
+# 先用 16 跑通、量 baseline；消融時再掃 4 / 16 / -1（run_ablation.py --suite lora）。
+num_layers: 16
+
+# 24GB 上只能 1（見上面的預算表）。要更大的 effective batch 就靠梯度累積，
+# 這正是 ch08「湊到目標 global batch size」那一步在單機情境下的唯一手段。
+batch_size: 1
+iters: 1000
+
+# max_seq_length 必須用 prepare_data_gemma.py 算出的建議值填，不要沿用 Week 1 的 2048。
+# Gemma 的 tokenizer 是 262K vocab，對中文的壓縮率和 GPT-OSS 不同，
+# 同一批資料的 token 長度分布會不一樣 —— 這是 Week 2 必須重新決定的唯一超參數。
+max_seq_length: 2048
+
+learning_rate: 1e-4
+lr_schedule:
+  name: cosine_decay
+  warmup: 50
+  warmup_init: 1e-6
+  arguments: [1e-4, 1000, 1e-6]      # [峰值, 總步數, 最終值]
+
+steps_per_report: 10
+steps_per_eval: 100
+val_batches: 25
+save_every: 200
+
+adapter_path: "out/lora-12b"
+resume_adapter_file: null
+
+test: false
+test_batches: 100
+
+# 梯度檢查點：在 seq=2048 上這個開關不是「要不要省記憶體」，是「跑不跑得起來」
+#（關掉是 25.3 GiB，直接 OOM）。所以正式訓練必開。
+# H3 的量測不要在這裡做 —— 用 scripts/run_ablation.py --suite checkpoint，
+# 它會把 seq 壓到 512 讓開關兩邊都跑得起來，才比得出「省多少 / 慢多少」。
+grad_checkpoint: true
+
+lora_parameters:
+  # attention only。掛滿 48 層時 21.3M 可訓練參數（0.32 GiB 優化器狀態）。
+  # 消融時改成含 FFN：加上 "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"
+  # → 65.6M 可訓練參數，優化器記憶體 0.32 → 0.98 GiB（H6 的量測點）。
+  # 對照組：26B MoE 若把 LoRA 掛到 expert 上是 11.5M → 667.4M（58×），
+  #        這個「dense 只膨脹 3.1×、MoE 膨脹 58×」的差別就是 E6 的論據之一。
+  #
+  # ⚠️ Gemma 4 的 full_attention 層 K/V 共用投影，沒有 v_proj 這個模組。
+  #    mlx-lm 對找不到的 key 是直接略過（tuner/utils.py），不會報錯，
+  #    所以下面照列 v_proj 是安全的 —— 它只會作用在 40 個 sliding 層上。
+  keys:
+    - "self_attn.q_proj"
+    - "self_attn.k_proj"
+    - "self_attn.v_proj"
+    - "self_attn.o_proj"
+  rank: 16
+  scale: 20.0
+  dropout: 0.0

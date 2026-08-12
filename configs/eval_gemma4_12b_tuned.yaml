@@ -1,0 +1,49 @@
+# Twinkle Eval — Gemma 4 12B 微調後
+#
+# 和 eval_gemma4_12b_base.yaml **只有 model.name 一行不同**。
+# 其他全部必須一模一樣（temperature / max_tokens / enable_thinking /
+# shuffle_options / 科目清單），否則微調前後的差值就不是微調造成的。
+#
+# ── 起 server（先融合 adapter）──────────────────────────────
+#   mlx_lm.fuse --model mlx-community/gemma-4-12B-it-4bit \
+#               --adapter-path out/lora-12b \
+#               --save-path out/gemma4-12b-tw
+#   mlx_lm.server --model out/gemma4-12b-tw --host 127.0.0.1 --port 1234
+#
+#   （也可以不融合，直接 mlx_lm.server --model <base> --adapter-path out/lora-12b，
+#     但融合後的權重比較好交付，也才能拿去跑 inspect_router_mlx.py）
+#
+#   twinkle-eval --config configs/eval_gemma4_12b_tuned.yaml
+
+llm_api:
+  base_url: "http://127.0.0.1:1234/v1"
+  api_key: "not-needed"
+  disable_ssl_verify: false
+  api_rate_limit: -1
+  max_retries: 3
+  timeout: 600
+
+model:
+  name: "out/gemma4-12b-tw"     # ← 唯一和 base 版不同的一行
+  temperature: 0.0
+  top_p: 1.0
+  max_tokens: 2048
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+  extra_body:
+    chat_template_kwargs:
+      enable_thinking: true
+
+evaluation:
+  dataset_paths:
+    - "datasets/ikala__tmmluplus/geography_of_taiwan.parquet"
+    - "datasets/ikala__tmmluplus/taiwanese_hokkien.parquet"
+    - "datasets/ikala__tmmluplus/three_principles_of_people.parquet"
+
+  evaluation_method: "box"
+  datasets_prompt_map: {}
+  shuffle_options: true
+  repeat_runs: 1
+
+logging:
+  level: "INFO"

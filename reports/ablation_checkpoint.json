@@ -1,0 +1,18 @@
+[
+  {
+    "label": "不開梯度檢查點",
+    "status": "dry_run",
+    "max_seq_length": 512,
+    "batch_size": 1,
+    "grad_checkpoint": false,
+    "num_layers": 16
+  },
+  {
+    "label": "開梯度檢查點",
+    "status": "dry_run",
+    "max_seq_length": 512,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  }
+]

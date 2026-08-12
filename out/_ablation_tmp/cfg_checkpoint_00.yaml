@@ -1,0 +1,35 @@
+model: mlx-community/gemma-4-12B-it-4bit
+train: true
+data: data/mlx
+seed: 42
+num_layers: 16
+batch_size: 1
+iters: 30
+max_seq_length: 512
+learning_rate: 1e-4
+lr_schedule:
+  name: cosine_decay
+  warmup: 50
+  warmup_init: 1e-6
+  arguments:
+  - 1e-4
+  - 1000
+  - 1e-6
+steps_per_report: 5
+steps_per_eval: 31
+val_batches: 25
+save_every: 31
+adapter_path: /sessions/rcw-012fdu1ei5oavkna3krkmoxf/mnt/ultrascale-lab/out/_ablation_tmp/checkpoint_00
+resume_adapter_file: null
+test: false
+test_batches: 100
+grad_checkpoint: false
+lora_parameters:
+  keys:
+  - self_attn.q_proj
+  - self_attn.k_proj
+  - self_attn.v_proj
+  - self_attn.o_proj
+  rank: 16
+  scale: 20.0
+  dropout: 0.0

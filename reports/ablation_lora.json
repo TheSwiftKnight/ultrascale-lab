@@ -1,0 +1,26 @@
+[
+  {
+    "label": "LoRA 4 層",
+    "status": "dry_run",
+    "max_seq_length": 1024,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 4
+  },
+  {
+    "label": "LoRA 16 層",
+    "status": "dry_run",
+    "max_seq_length": 1024,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16
+  },
+  {
+    "label": "LoRA 全部層",
+    "status": "dry_run",
+    "max_seq_length": 1024,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": -1
+  }
+]

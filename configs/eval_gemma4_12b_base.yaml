@@ -1,0 +1,71 @@
+# Twinkle Eval — Gemma 4 12B baseline（微調前）
+# 取代 Week 1 的 baseline_lmstudio.yaml（那份打的是 gpt-oss）
+#
+# ── 起 server ────────────────────────────────────────────────
+#   source .venv/bin/activate
+#   mlx_lm.server --model mlx-community/gemma-4-12B-it-4bit \
+#                 --host 127.0.0.1 --port 1234
+#
+#   確認端點活著（順便看 model id 叫什麼，下面 model.name 要一致）：
+#   curl -s http://127.0.0.1:1234/v1/models | python3 -m json.tool
+#
+# ── 前置 ─────────────────────────────────────────────────────
+#   twinkle-eval --download-dataset ikala/tmmluplus   # Week 1 已下載過，可略
+#   twinkle-eval --validate --config configs/eval_gemma4_12b_base.yaml
+#   twinkle-eval --dry-run  --config configs/eval_gemma4_12b_base.yaml
+#   twinkle-eval            --config configs/eval_gemma4_12b_base.yaml
+#
+# ⚠️ 可比性：準確率跨硬體可比；吞吐與峰值記憶體是 Metal 上的數字，
+#    不能和租用 CUDA 卡的並列。
+
+llm_api:
+  base_url: "http://127.0.0.1:1234/v1"
+  api_key: "not-needed"
+  disable_ssl_verify: false
+  api_rate_limit: -1
+  max_retries: 3
+  timeout: 600
+
+model:
+  name: "mlx-community/gemma-4-12B-it-4bit"
+  temperature: 0.0            # 確定性輸出，baseline 必須
+  top_p: 1.0
+  max_tokens: 2048            # 開了 thinking 會先產思考內容，不能設太小
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+  extra_body:
+    chat_template_kwargs:
+      # ⚠️ 必須和 prepare_data_gemma.py 的 enable_thinking 一致。
+      #    這是 Gemma 4 版的「reasoning_effort 要同檔位」規則。
+      #    訓練資料開了 thinking、評測卻沒開，前綴不同 → 微調前後對比失真。
+      enable_thinking: true
+
+evaluation:
+  dataset_paths:
+    # 【試水溫】先跑 3 科確認流程與時間成本
+    - "datasets/ikala__tmmluplus/geography_of_taiwan.parquet"
+    - "datasets/ikala__tmmluplus/taiwanese_hokkien.parquet"
+    - "datasets/ikala__tmmluplus/three_principles_of_people.parquet"
+    #
+    # 【正式版】確認時間可接受後改用下面 10 科（Week 1 已定案的台灣知識子集）
+    #   選取原則：台灣在地情境 + 繁中語言能力，避開純理工科目
+    # - "datasets/ikala__tmmluplus/geography_of_taiwan.parquet"
+    # - "datasets/ikala__tmmluplus/taiwanese_hokkien.parquet"
+    # - "datasets/ikala__tmmluplus/three_principles_of_people.parquet"
+    # - "datasets/ikala__tmmluplus/national_protection.parquet"
+    # - "datasets/ikala__tmmluplus/administrative_law.parquet"
+    # - "datasets/ikala__tmmluplus/introduction_to_law.parquet"
+    # - "datasets/ikala__tmmluplus/taxation.parquet"
+    # - "datasets/ikala__tmmluplus/junior_chinese_exam.parquet"
+    # - "datasets/ikala__tmmluplus/tve_chinese_language.parquet"
+    # - "datasets/ikala__tmmluplus/chinese_language_and_literature.parquet"
+
+  # Gemma 4 開 thinking 後會先輸出思考內容再給答案 → 用 box 抽取 \box{} 內容
+  evaluation_method: "box"
+
+  datasets_prompt_map: {}
+  shuffle_options: true       # 消除選項位置偏好
+  repeat_runs: 1              # baseline 先跑 1 次；正式報告建議 3 次取標準差
+
+logging:
+  level: "INFO"

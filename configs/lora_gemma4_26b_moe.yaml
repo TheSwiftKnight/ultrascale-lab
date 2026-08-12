@@ -1,0 +1,62 @@
+# mlx_lm.lora — Gemma 4 26B-A4B（MoE）本機 LoRA 微調
+#
+# ⚠️ 這一份是 **stretch goal**，不是主線。24GB 機器上非常貼邊。
+#    主線是 lora_gemma4_12b.yaml；這份跑不動就把它移到租卡那 2–4 小時。
+#
+# 跑之前一定要先放寬 GPU wired limit（重開機後失效）：
+#   sudo sysctl iogpu.wired_limit_mb=20480
+# 還原：
+#   sudo sysctl iogpu.wired_limit_mb=0
+#
+# 記憶體預算（predict_memory_gemma.py --model gemma4-26b-a4b）：
+#   seq=2048：權重 12.5 + LoRA 0.17 + 活化(ckpt) 0.54 + logits 3.00 + 開銷 1.0 = 17.2 GiB ⚠️
+#   seq=1024：活化 0.27、logits 1.50 → 約 15.4 GiB ✅ 比較穩
+# → 所以這份預設 max_seq_length=1024，並且 grad_checkpoint 強制開啟。
+#   代價是超過 1024 token 的樣本會被截斷，這件事要寫進報告的限制章節。
+
+model: "mlx-community/gemma-4-26B-A4B-it-4bit"
+train: true
+data: "data/mlx"
+seed: 42
+
+# MoE 模型 30 層。先掛 8 層試水溫，確認不 OOM 再往上加。
+num_layers: 8
+
+batch_size: 1              # 24GB 上 bs 只能是 1；要更大的 effective batch 靠梯度累積
+iters: 1000
+max_seq_length: 1024       # ← 為了壓 logits（262K vocab）而降，不是隨便選的
+
+learning_rate: 1e-4
+lr_schedule:
+  name: cosine_decay
+  warmup: 50
+  warmup_init: 1e-6
+  arguments: [1e-4, 1000, 1e-6]
+
+steps_per_report: 10
+steps_per_eval: 100
+val_batches: 10
+save_every: 200
+
+adapter_path: "out/lora-26b"
+resume_adapter_file: null
+
+test: false
+test_batches: 50
+
+grad_checkpoint: true      # 必開，關掉必定 OOM（seq2048 活化從 0.54 GiB 變 6.11 GiB）
+
+lora_parameters:
+  # ⚠️ 千萬不要加 expert 的 key。predict_memory 算過：
+  #    attention only = 11.5M 可訓練參數（0.17 GiB）
+  #    含 expert     = 667.4M 可訓練參數（9.94 GiB）→ 24GB 機器直接爆
+  #    這個 58 倍的差距就是 H6 的結論，用算的即可，不必真的跑。
+  #    （對照：12B dense 全掛只膨脹 3.1 倍 —— 差別來自 30 層 × 128 專家 = 3,840 組矩陣）
+  keys:
+    - "self_attn.q_proj"
+    - "self_attn.k_proj"
+    - "self_attn.v_proj"
+    - "self_attn.o_proj"
+  rank: 16
+  scale: 20.0
+  dropout: 0.0
