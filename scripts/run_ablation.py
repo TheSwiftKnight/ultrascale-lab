@@ -40,7 +40,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
 TMP = ROOT / "out" / "_ablation_tmp"
-BASE_CONFIG = "configs/lora_gemma4_12b.yaml"
+BASE_CONFIG = "configs/lora_gemma4_e4b.yaml"
 
 LINE_RE = re.compile(
     r"Iter\s+(\d+):.*?Train loss\s+([\d.]+).*?It/sec\s+([\d.]+).*?"
@@ -52,10 +52,10 @@ LINE_RE = re.compile(
 # 目的是讓**變因的兩端都跑得起來** —— 一端 OOM 就沒有對照可言。
 SUITES = {
     "checkpoint": (
-        # seq 壓到 512：不開 11.7 GiB / 開 8.2 GiB，兩端在**預設** wired limit 下都活。
-        # seq=1024 不開是 16.3 GiB，會頂到 24GB 機器預設的 ~16 GiB 上限；
-        # seq=2048 不開是 25.3 GiB，直接 OOM。
-        {"max_seq_length": 512, "batch_size": 1},
+        # E4B 夠小，可以直接在**正式訓練的 seq=2048** 上量開關差異：
+        # 不開 16.2 GiB / 開 8.5 GiB，兩端都活（不開那端需要 wired limit ≥ 18 GiB）。
+        # 這比先前的 12B 乾淨 —— 不必為了讓兩端都跑得起來而壓低 seq。
+        {"max_seq_length": 2048, "batch_size": 1},
         [("不開梯度檢查點", {"grad_checkpoint": False}),
          ("開梯度檢查點", {"grad_checkpoint": True})],
     ),
@@ -64,10 +64,10 @@ SUITES = {
         [("seq=512", {"max_seq_length": 512}),
          ("seq=1024", {"max_seq_length": 1024}),
          ("seq=2048", {"max_seq_length": 2048}),
-         ("seq=4096", {"max_seq_length": 4096})],      # 預估 15.0 GiB，貼邊
+         ("seq=4096", {"max_seq_length": 4096})],      # 預估 12.1 GiB，安全
     ),
     "batch": (
-        # seq 壓到 512，讓 bs 一路開到 8 都不 OOM（bs=8 預估 15.0 GiB）
+        # seq 壓到 512，讓 bs 一路開到 8 都不 OOM（bs=8 預估 12.1 GiB）
         {"max_seq_length": 512, "grad_checkpoint": True},
         [("bs=1", {"batch_size": 1}),
          ("bs=2", {"batch_size": 2}),
@@ -75,22 +75,22 @@ SUITES = {
          ("bs=8", {"batch_size": 8})],
     ),
     "lora": (
-        {"max_seq_length": 1024, "batch_size": 1, "grad_checkpoint": True},   # 9.7 GiB
+        {"max_seq_length": 2048, "batch_size": 1, "grad_checkpoint": True},   # 8.5 GiB
         [("LoRA 4 層", {"num_layers": 4}),
          ("LoRA 16 層", {"num_layers": 16}),
-         ("LoRA 全部層", {"num_layers": -1})],
+         ("LoRA 全部 42 層", {"num_layers": -1})],
     ),
 }
 
 HYPOTHESIS = {
     "checkpoint": "H3：開 full checkpointing 後活化記憶體應下降 >85%"
-                  "（seq512 預測 3.76 → 0.26 GiB），step time 增加約 30–40%",
+                  "（seq2048 預測 8.34 → 0.63 GiB，−92%），step time 增加約 30–40%",
     "seqlen": "H4：logits（seq × 262,144 × 6 bytes）隨 seq 線性成長，"
               "是峰值記憶體裡被低估的大戶（512→4096：0.75 → 6.00 GiB）",
     "batch": "H5：活化與 logits 隨 batch size 線性成長；因為有 Flash 與滑動視窗，"
              "隨 seq 也接近線性而非 ch01 說的平方",
-    "lora": "H6：可訓練參數隨掛載層數線性成長（4/16/48 層 ≈ 1.8M/7.1M/21.3M），"
-            "但優化器記憶體相對 5.9 GiB 的權重仍是雜訊",
+    "lora": "H6：可訓練參數隨掛載層數線性成長（4/16/42 層 ≈ 0.9M/3.5M/9.1M），"
+            "但優化器記憶體相對 3.7 GiB 的權重仍是雜訊",
 }
 
 
@@ -246,9 +246,9 @@ def main():
         print(f"\n{'='*66}\n消融 suite：{s}\n{'='*66}")
         print(f"  假設：{HYPOTHESIS.get(s, '')}")
         print(f"  釘死：{pin}")
-        print("  ⚠️ 跑之前先放寬 GPU wired limit，"
-              "seq=4096 與 bs=8 這兩格會頂到 ~15 GiB：")
-        print("     sudo sysctl iogpu.wired_limit_mb=20480")
+        if s == "checkpoint":
+            print("  ⚠️ 「不開檢查點」那組預估 16.2 GiB，超過 24GB 機器的預設上限。"
+                  "先放寬：sudo sysctl iogpu.wired_limit_mb=20480")
         results = []
         for i, (lbl, ov) in enumerate(variants):
             slug = f"{s}_{i:02d}"

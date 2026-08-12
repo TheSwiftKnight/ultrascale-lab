@@ -1,7 +1,7 @@
 # mlx_lm.lora — Gemma 4 26B-A4B（MoE）本機 LoRA 微調
 #
 # ⚠️ 這一份是 **stretch goal**，不是主線。24GB 機器上非常貼邊。
-#    主線是 lora_gemma4_12b.yaml；這份跑不動就把它移到租卡那 2–4 小時。
+#    主線是 lora_gemma4_e4b.yaml；這份跑不動就把它移到租卡那 2–4 小時。
 #
 # 跑之前一定要先放寬 GPU wired limit（重開機後失效）：
 #   sudo sysctl iogpu.wired_limit_mb=20480
@@ -51,7 +51,7 @@ lora_parameters:
   #    attention only = 11.5M 可訓練參數（0.17 GiB）
   #    含 expert     = 667.4M 可訓練參數（9.94 GiB）→ 24GB 機器直接爆
   #    這個 58 倍的差距就是 H6 的結論，用算的即可，不必真的跑。
-  #    （對照：12B dense 全掛只膨脹 3.1 倍 —— 差別來自 30 層 × 128 專家 = 3,840 組矩陣）
+  #    （對照：E4B dense 全掛只膨脹 3.8 倍 —— 差別來自 30 層 × 128 專家 = 3,840 組矩陣）
   keys:
     - "self_attn.q_proj"
     - "self_attn.k_proj"

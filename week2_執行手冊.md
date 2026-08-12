@@ -25,50 +25,71 @@ Step 0–1 是準備，Step 2–4 是換血，Step 5–9 是主線實驗，Step 
 
 ---
 
-## 0. 先講清楚：為什麼是「12B 主線 + 26B MoE 對照」
+## 0. 先講清楚：為什麼是「E4B 主線 + 26B MoE 對照」
 
 你的機器是 **M4 Pro / 24GB 統一記憶體**。這個數字決定了一切，先把算術攤開：
 
-Gemma 4 一共五個尺寸，其中兩個和這個專案有關（規格已用 `config.json` 逐項核對）：
+### 先講一個硬限制：12B 用不了
 
-| | Gemma 4 12B Unified | Gemma 4 26B-A4B |
-|---|---|---|
-| 架構 | **dense**，48 層 | **MoE**，30 層，128 專家取 8 |
-| 總參數（公式算） | 11.91B（官方 11.95B，誤差 **0.4%**） | 25.23B（官方 25.2B，誤差 **0.1%**） |
-| active 參數 | 11.91B | **3.82B**（官方 3.8B，誤差 **0.6%**） |
-| 4-bit 權重 | **5.9 GiB** | 12.5 GiB |
-| 微調總預算（seq2048, bs1, 開檢查點） | **11.2 GiB ✅** | 17.2 GiB ⚠️ |
-
-**26B-A4B 是 GPT-OSS 20B 的完美替身** —— 25.2B total / 3.8B active，
-對上 GPT-OSS 的 20.9B / 3.6B，連 MoE 佔全模型 91% 參數這件事都一樣。
-Week 1 花整週建立的 ch06 分析、roofline 論證、E1–E6 假設，**全部可以原封不動搬過來**。
-
-但它在 24GB 上微調太貼邊（17.2 GiB，且要手動放寬 GPU wired limit）。
-硬上會把一週耗在跟 OOM 搏鬥。
-
-所以 Week 2 拆成兩條線：
+Gemma 4 12B Unified 的 `model_type` 是 **`gemma4_unified`**，
+mlx-lm 0.31.3（最新版）**不支援**，載入直接噴：
 
 ```
-主線 A（本機，保證跑得完）
-  Gemma 4 12B dense · 4-bit LoRA
-  → 微調 + 消融 + 微調前後 TMMLU+   ← 這條線交付「Week 2 有做出東西」
+ValueError: Model type gemma4_unified not supported.
+```
+
+這是 mlx-lm 的已知缺口（[issue #1481](https://github.com/ml-explore/mlx-lm/issues/1481)，
+2026-07 開著、無人認領、沒有 PR）。**12B 是唯一用 `gemma4_unified` 的變體**；
+E4B / 26B-A4B / 31B 都是 `gemma4`，全部能跑。所以 dense 那一側改用 **E4B**。
+
+### 兩個模型（規格已用 `config.json` 逐項核對，`--verify-config` 全綠）
+
+| | Gemma 4 E4B | Gemma 4 26B-A4B |
+|---|---|---|
+| 架構 | **dense**，42 層 | **MoE**，30 層，128 專家取 8 |
+| 總參數（公式算） | 7.46B（官方 8B with embeddings） | 25.23B（官方 25.2B，誤差 **0.1%**） |
+| **每 token 實際用到** | **3.97B**（非嵌入） | **3.82B**（active） |
+| 4-bit 權重 | **3.7 GiB** | 12.5 GiB |
+| bf16 權重 | **13.9 GiB**（本機塞得下！） | 47.0 GiB |
+| 微調總預算（seq2048, bs1, 開檢查點） | **8.5 GiB ✅** | 17.2 GiB ⚠️ |
+
+**換成 E4B 反而讓對照更乾淨。** E4B 的非嵌入參數 3.97B 和 26B-A4B 的 active 3.82B
+幾乎一樣 —— 兩者**每 token 的計算量相當**，總參數卻差 3.4 倍。
+於是「MoE 到底買到了什麼」變成一個可以乾淨量測的問題：
+同樣的每 token 計算量，多花 8.8 GiB 記憶體養 25B 參數，換到多少準確率？
+
+**另一個意外收穫**：E4B 的 bf16 只要 13.9 GiB，
+**P1 / P4（bf16 vs 4-bit 的記憶體與掉點）不必租卡就能在本機做完** ——
+那本來是 Step 10 租卡清單上最重要的一項。
+
+26B-A4B 的 25.2B total / 3.8B active 對上 GPT-OSS 的 20.9B / 3.6B，
+連 MoE 佔全模型 90% 參數這件事都一樣 ——
+Week 1 建立的 ch06 分析、roofline 論證、E1–E6 假設**全部可以搬過來**。
+但它在 24GB 上微調太貼邊（17.2 GiB，要手動放寬 GPU wired limit），所以只做推論。
+
+Week 2 拆成兩條線：
+
+```
+主線 A（本機，寬裕）
+  Gemma 4 E4B dense · 4-bit LoRA（8.5 GiB）
+  → 微調 + 四組消融 + 微調前後 TMMLU+ + bf16/4-bit 對照
+     ← 這條線交付「Week 2 有做出東西」，而且 P1/P4 也在這裡完成
 
 主線 B（本機，只做推論）
-  Gemma 4 26B-A4B MoE · 4-bit
-  → 載入驗證 + roofline + 路由分析   ← 這條線接住 Week 1 的 ch06 敘事
-     （Week 1 的 H1/E1/E2 本來就是推論實驗，成本很低）
+  Gemma 4 26B-A4B MoE · 4-bit（12.5 GiB）
+  → 載入驗證 + roofline + 路由分析   ← 接住 Week 1 的 ch06 敘事
 
-租卡 2–4 小時（48GB）
-  → torch profiler 實測、bf16 vs 4-bit、CUDA 版梯度檢查點消融
+租卡 2–4 小時（48GB）—— 清單比原本短了
+  → torch profiler 的逐項拆解、CUDA 版梯度檢查點消融
      以及（有餘力的話）26B-A4B 的 LoRA
 ```
 
-**這個拆法反而讓 Week 2 比原計畫更有料**：多出一組 **dense vs MoE 對照**，
-而那正是 ch06 最後一個假設 E6（「EP／MoE 在小規模情境下划不划算」）要回答的問題。
-原計畫只有一個 MoE 模型，根本沒有對照組。
+**多出一組 dense vs MoE 對照**，正是 ch06 最後一個假設 E6
+（「EP／MoE 在小規模情境下划不划算」）要回答的問題。
 
-> 如果你之後拿到記憶體更大的機器，把主線 A 換成 26B-A4B 即可，
-> 所有腳本都同時支援兩個模型（`--model gemma4-26b-a4b`）。
+> 如果 mlx-lm 之後補上 `gemma4_unified`，或你拿到更大記憶體的機器，
+> 把主線 A 換成 12B 或 26B-A4B 即可 ——
+> `predict_memory_gemma.py` 的 `CONFIGS` 加一筆就好，其餘腳本不用動。
 
 ---
 
@@ -143,10 +164,15 @@ uv pip install -U mlx mlx-lm "transformers>=5.0" "datasets>=2.19" \
 # 1-2 環境驗收（缺什麼會直接告訴你補的指令）
 python scripts/verify_env_week2.py --check-models
 
-# 1-3 掛著下載模型（12B 約 7GB、26B 約 16GB，可以先睡覺）
+# 1-3 掛著下載模型
 #     ⚠️ 一定要加 HF_HUB_DISABLE_XET=1 —— 見下方「Xet 傳輸」說明
-HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-12B-it-4bit --max-workers 4
-HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-26B-A4B-it-4bit --max-workers 4
+#     ⚠️ 注意 e4b 是小寫，且**不要**下載 gemma-4-12B（mlx-lm 載不動）
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-e4b-it-4bit --max-workers 4        # 5.2 GB
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-26B-A4B-it-4bit --max-workers 4    # 15.4 GB
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-e4b-it-bf16 --max-workers 4        # 15.9 GB（P1/P4 用）
+
+# 若你已經下載過 12B，可以刪掉（mlx-lm 0.31.3 載不動）
+hf cache delete mlx-community/gemma-4-12B-it-4bit
 
 # 1-4 為 26B 放寬 GPU wired limit（重開機後失效，不會永久改動系統）
 sudo sysctl iogpu.wired_limit_mb=20480
@@ -155,6 +181,8 @@ sudo sysctl iogpu.wired_limit_mb=20480
 **讀哪裡** — 不用讀書，這一步純環境。
 
 **驗收** — `verify_env_week2.py` 全綠；`df -h` 剩餘 > 25 GB。
+
+> **`--check-models` 會幫你抓兩件事**：E4B / 26B 是否下載完成，以及快取裡有沒有載不動的 gemma-4-12B。
 
 > **關於 Xet 傳輸（Week 1 踩過的坑，這裡一定會再遇到）**
 >
@@ -166,7 +194,7 @@ sudo sysctl iogpu.wired_limit_mb=20480
 > CAS Client Error: Format error: I/O error: error decoding response body
 > ```
 >
-> 26B 那個 15.4 GB 的檔特別容易中招（12B 檔案小，通常會過）。
+> 26B 那個 15.4 GB 的檔特別容易中招（E4B 的 4-bit 只有 5.2 GB，通常會過）。
 > 解法是關掉 Xet 退回一般 HTTPS，**已下載的部分會續傳，不用重來**：
 >
 > ```bash
@@ -180,8 +208,9 @@ sudo sysctl iogpu.wired_limit_mb=20480
 > 但 `hf download` 是 CLI，要自己加環境變數。
 
 > **關於 `iogpu.wired_limit_mb`**：macOS 預設只讓 GPU 用約 2/3 的統一記憶體
-> （24GB 機器 ≈ 16 GiB）。12B 主線用不到這個，但 26B-A4B 的 12.5 GiB 權重加上
-> KV cache 會頂到天花板。調到 20480（20 GiB）是安全值；**不要超過 21504**，
+> （24GB 機器 ≈ 16 GiB）。E4B 的 4-bit 用不到這個，但 26B-A4B 的 12.5 GiB 權重、
+> E4B 的 bf16（13.9 GiB）、以及消融裡「不開檢查點」那一格（16.2 GiB）都會頂到天花板。
+> 調到 20480（20 GiB）是安全值；**不要超過 21504**，
 > 再上去系統會開始換頁，反而更慢甚至當掉。還原：`sudo sysctl iogpu.wired_limit_mb=0`。
 
 ---
@@ -232,6 +261,9 @@ python scripts/predict_memory_gemma.py --seq 4096
 
 # 只看 MoE，且把 LoRA 掛到 expert 上（H6）
 python scripts/predict_memory_gemma.py --model gemma4-26b-a4b --lora-target all
+
+# 只看 E4B
+python scripts/predict_memory_gemma.py --model gemma4-e4b
 ```
 
 **讀哪裡** — ch01（記憶體剖析）、ch10（混合精度）。這兩章 Week 1 讀過，
@@ -241,40 +273,44 @@ python scripts/predict_memory_gemma.py --model gemma4-26b-a4b --lora-target all
 
 ### 換模型後最重要的三個數字（先記住，Step 8 要驗）
 
-1. **26B-A4B 的 4-bit 權重只要 12.5 GiB，比 GPT-OSS 的 12.8 GiB 還小** ——
-   雖然總參數多了 20%。原因：GPT-OSS 原生 MXFP4 只量化 expert，attention／router／
-   embed／lm_head 全留 bf16；Gemma 沒有官方量化權重，走 MLX 通用量化，**全部一起壓**。
-   這是一個很好的報告素材：「量化省多少，取決於量化涵蓋範圍，不只取決於位元數」。
+1. **E4B 有 38% 的參數在 Per-Layer Embeddings 上**。E4B 是為端上裝置設計的，
+   用 PLE 把知識搬到查表裡：262,144 × (42 層 × 256) = **2.82B 參數**，
+   而語言主幹只有 3.97B。這解釋了官方為什麼標「4.5B effective / 8B with embeddings」——
+   **兩個數字都對，只是算的東西不同**。報告裡要講清楚你用的是哪一個。
 
-2. **logits 變成第二大戶**。Gemma 4 的 vocab 是 262,144，比 GPT-OSS 的 201,088 大 30%。
+2. **logits 是第二大戶**。Gemma 4 的 vocab 是 262,144，
    seq=2048 時光 logits 就是 **3.00 GiB**，seq=4096 時 **6.00 GiB**。
-   Week 1 的 H4 說「logits 是被低估的大戶」，換到 Gemma 上這句話更成立。
+   對 E4B 而言，開了檢查點之後 logits（3.00）比權重（3.7）幾乎一樣大，
+   比活化（0.63）大 5 倍。Week 1 的 H4「logits 是被低估的大戶」在這裡格外明顯。
 
-3. **dense 的活化比 MoE 大得多**。12B dense 在 seq=2048、不開檢查點時活化 **15.05 GiB**，
-   26B MoE 只要 **6.11 GiB** —— 因為 MoE 每 token 只過 8/128 個專家，
-   而 dense 的 FFN intermediate 是 15,360（= 4h）全都要存。
-   **「參數多的那個活化反而小」** 是這週最反直覺、也最值得寫進報告的一句話。
+3. **dense 的活化比 MoE 大**。E4B 在 seq=2048、不開檢查點時活化 **8.34 GiB**，
+   26B MoE 只要 **6.11 GiB** —— 儘管 MoE 的總參數是它的 3.4 倍。
+   因為 MoE 每 token 只過 8/128 個專家，而 dense 的 FFN intermediate 是 10,240（= 4h）
+   每層都要全存。**「參數多的那個活化反而小」** 是這週最反直覺、也最值得寫進報告的一句話。
 
 ### 👉 這一步會逼出一個設定決定
 
-12B 在 seq=2048 的完整預算是：
+E4B 在 24GB 上的完整預算（bs=1）：
 
-| seq | bs | 檢查點 | 活化 | logits | 合計 | 判定 |
-|---:|---:|---|---:|---:|---:|---|
-| 512 | 1 | 開 | 0.26 | 0.75 | 8.2 GiB | ✅（消融用） |
-| 512 | 1 | **關** | 3.76 | 0.75 | 11.7 GiB | ✅（消融用） |
-| 2048 | 1 | 開 | 1.03 | 3.00 | **11.2 GiB** | ✅ ← 主線設定 |
-| 2048 | 2 | 開 | 2.06 | 6.00 | 15.3 GiB | ⚠️ 貼邊 |
-| 2048 | 4 | 開 | 4.12 | 12.00 | 23.3 GiB | ❌ OOM |
-| 2048 | 1 | **關** | 15.05 | 3.00 | **25.3 GiB** | ❌ OOM |
-| 4096 | 1 | 開 | 2.06 | 6.00 | 15.3 GiB | ⚠️ 貼邊 |
+| seq | bs | 精度 | 檢查點 | 活化 | logits | 合計 | 判定 |
+|---:|---:|---|---|---:|---:|---:|---|
+| 512 | 1 | 4-bit | 開 | 0.16 | 0.75 | 5.7 GiB | ✅ |
+| 2048 | 1 | 4-bit | 開 | 0.63 | 3.00 | **8.5 GiB** | ✅ ← 主線設定 |
+| 4096 | 1 | 4-bit | 開 | 1.25 | 6.00 | 12.1 GiB | ✅ |
+| 512 | 8 | 4-bit | 開 | 1.28 | 6.00 | 12.1 GiB | ✅ |
+| 2048 | 1 | 4-bit | **關** | 8.34 | 3.00 | 16.2 GiB | ⚠️ 需 wired limit |
+| 2048 | 1 | **bf16** | 開 | 0.63 | 3.00 | **18.7 GiB** | ⚠️ 需 wired limit |
 
-**所以 `configs/lora_gemma4_12b.yaml` 設 `batch_size: 1`、`grad_checkpoint: true`。**
-這不是保守，是算出來的。而「不開檢查點就 OOM」本身已經是 H3 的一半答案 ——
-另一半（省多少、慢多少）在 Step 8 用壓低的 seq 量。
+**和原本的 12B 比，E4B 讓整個 Week 2 寬鬆很多**：
 
-要更大的 effective batch 只能靠**梯度累積** —— 這正是 ch08「湊到目標 global
-batch size」那一步在單機情境下的唯一手段，也是課本假設（多卡 DP）在你這裡的落差。
+- 主線只用 8.5 GiB，還有一半記憶體可以同時開評測 server。
+- **H3（梯度檢查點）可以在正式訓練的同一個 seq=2048 上量**，
+  不必為了讓兩端都跑得起來而壓低 seq —— 消融數字直接對得上訓練數字。
+- seq 掃到 4096、bs 掃到 8 都不會 OOM，H4/H5 的曲線更完整。
+- **bf16 跑得起來（18.7 GiB）** → P1/P4 不用租卡。
+
+要更大的 effective batch 仍然可以靠**梯度累積** —— 這是 ch08「湊到目標 global
+batch size」那一步在單機情境下的手段，也是課本假設（多卡 DP）在你這裡的落差。
 
 ---
 
@@ -350,7 +386,7 @@ max_seq_len= 1536：涵蓋 xx.xx%（截斷 xxx 筆）
 max_seq_len= 2048：涵蓋 xx.xx%（截斷 xxx 筆） ← 建議
 ```
 
-**把達到 99% 涵蓋率的那個值填進 `configs/lora_gemma4_12b.yaml` 的 `max_seq_length`。**
+**把達到 99% 涵蓋率的那個值填進 `configs/lora_gemma4_e4b.yaml` 的 `max_seq_length`。**
 
 Week 1 在 GPT-OSS tokenizer 下算出 2048（p99=2033）。
 Gemma 的 262K vocab 對中文的壓縮率不同，**這個數字很可能會變** ——
@@ -367,8 +403,11 @@ E2（用記憶體頻寬 roofline 證明 MoE 只讀 active 參數）。
 **跑什麼**
 
 ```bash
-# 兩個模型依序跑，寫出對照表
+# 兩個 4-bit 模型依序跑，寫出對照表
 python scripts/verify_load_mlx.py --both
+
+# P1：E4B 的 bf16 對照（13.9 GiB，本機跑得起來 —— 這是換 E4B 換來的）
+python scripts/verify_load_mlx.py --model mlx-community/gemma-4-e4b-it-bf16
 
 # 若你的機器不是 M4 Pro，頻寬要改（M4=120, M4 Pro=273, M4 Max=546 GB/s）
 python scripts/verify_load_mlx.py --both --bandwidth 273
@@ -378,7 +417,7 @@ python scripts/verify_load_mlx.py --both --bandwidth 273
 
 **驗收**
 
-- H1：實測峰值 vs 預測（12B 5.9 GiB / 26B 12.5 GiB）誤差 <10%
+- H1：實測峰值 vs 預測（E4B 3.7 GiB / 26B 12.5 GiB）誤差 <10%
 - E2：26B 的實測 tok/s 應該落在「MoE 理論上限的 70–85%」，
   且明顯高於「假設 dense 時的理論上限」
 - `reports/load_verification_gemma.md` 產出
@@ -389,8 +428,9 @@ python scripts/verify_load_mlx.py --both --bandwidth 273
 
 ### 這一步的看點
 
-12B dense 每 token 要讀 **全部** 5.9 GiB 權重，26B MoE 只讀約 20%（約 2.5 GiB）。
-所以**參數多兩倍的 MoE，推論反而應該更快**。如果實測真是這樣，
+E4B dense 每 token 要讀 **全部** 3.7 GiB 權重（其中 PLE 查表只讀命中的那幾列，
+實際更少），26B MoE 只讀約 20%（約 2.5 GiB）。
+兩者的每 token 讀取量落在同一個量級 —— 所以**吞吐應該接近**，而這正是 E4B/26B 這組配對的意義：計算量對齊，差別只在總參數與記憶體。如果實測真是這樣，
 E2 就從「算術上 active 比較小」升級成「物理上真的只搬了那麼多位元組」。
 
 ---
@@ -406,7 +446,7 @@ E2 就從「算術上 active 比較小」升級成「物理上真的只搬了那
 終端機 A（起 server，不要關）：
 ```bash
 source .venv/bin/activate
-mlx_lm.server --model mlx-community/gemma-4-12B-it-4bit --host 127.0.0.1 --port 1234
+mlx_lm.server --model mlx-community/gemma-4-e4b-it-4bit --host 127.0.0.1 --port 1234
 ```
 
 終端機 B：
@@ -416,9 +456,9 @@ source .venv/bin/activate
 # 確認端點活著，順便看 model id（要和 config 的 model.name 一致）
 curl -s http://127.0.0.1:1234/v1/models | python3 -m json.tool
 
-twinkle-eval --validate --config configs/eval_gemma4_12b_base.yaml
-twinkle-eval --dry-run  --config configs/eval_gemma4_12b_base.yaml
-twinkle-eval           --config configs/eval_gemma4_12b_base.yaml
+twinkle-eval --validate --config configs/eval_gemma4_e4b_base.yaml
+twinkle-eval --dry-run  --config configs/eval_gemma4_e4b_base.yaml
+twinkle-eval           --config configs/eval_gemma4_e4b_base.yaml
 ```
 
 **驗收** — 三科（台灣地理／台語／三民主義）跑完，拿到準確率。
@@ -437,35 +477,35 @@ twinkle-eval           --config configs/eval_gemma4_12b_base.yaml
 
 ```bash
 # 先確認 max_seq_length 已依 Step 4 的結果改好
-mlx_lm.lora --config configs/lora_gemma4_12b.yaml
+mlx_lm.lora --config configs/lora_gemma4_e4b.yaml
 
 # 中斷後恢復
-mlx_lm.lora --config configs/lora_gemma4_12b.yaml \
-            --resume-adapter-file out/lora-12b/adapters.safetensors
+mlx_lm.lora --config configs/lora_gemma4_e4b.yaml \
+            --resume-adapter-file out/lora-e4b/adapters.safetensors
 
-# 訓練完融合成完整權重（評測與路由分析要用）
-mlx_lm.fuse --model mlx-community/gemma-4-12B-it-4bit \
-            --adapter-path out/lora-12b \
-            --save-path out/gemma4-12b-tw
+# 訓練完融合成完整權重（評測要用）
+mlx_lm.fuse --model mlx-community/gemma-4-e4b-it-4bit \
+            --adapter-path out/lora-e4b \
+            --save-path out/gemma4-e4b-tw
 ```
 
 **讀哪裡** — ch08 的三步驟決策流程（Step 2 已讀）。
 
-**驗收** — train loss 下降且 val loss 沒有反轉；`out/lora-12b/adapters.safetensors` 產出。
+**驗收** — train loss 下降且 val loss 沒有反轉；`out/lora-e4b/adapters.safetensors` 產出。
 
 ### 開跑前，先跑 30 步確認記憶體與速度
 
 ```bash
-mlx_lm.lora --config configs/lora_gemma4_12b.yaml --iters 30 --steps-per-report 5
+mlx_lm.lora --config configs/lora_gemma4_e4b.yaml --iters 30 --steps-per-report 5
 ```
 
-看那行 `Peak mem X.XXX GB`，和 `predict_memory_gemma.py` 算的 **11.2 GiB** 比對
-（注意 mlx 印的是 GB 十進位，11.2 GiB = 12.0 GB）。
+看那行 `Peak mem X.XXX GB`，和 `predict_memory_gemma.py` 算的 **8.5 GiB** 比對
+（注意 mlx 印的是 GB 十進位，8.5 GiB = 9.1 GB）。
 差太多先查清楚再跑滿 1000 步 —— 這也順便完成了 H1 在**訓練**情境下的驗證
 （Step 5 驗的是推論情境）。
 
-從 30 步的 `It/sec` 推估 1000 步要多久。12B 在 M4 Pro 上大約 1–3 秒/步，
-1000 步約 20–50 分鐘。
+從 30 步的 `It/sec` 推估 1000 步要多久。E4B 只有 4B 級的計算量，在 M4 Pro 上
+應該比 12B 快得多，1000 步估 10–25 分鐘。
 
 ---
 
@@ -500,28 +540,29 @@ python scripts/run_ablation.py --suite all --iters 40
 
 | # | 假設 | 預測值（來自 Step 3） | 怎麼判定 |
 |---|---|---|---|
-| **H3** | 開 full checkpointing，活化下降 >85%，step time 增加 30–40% | seq512：3.76 → 0.26 GiB（−93%） | `--suite checkpoint` 的兩列相減 |
+| **H3** | 開 full checkpointing，活化下降 >85%，step time 增加 30–40% | seq2048：8.34 → 0.63 GiB（**−92%**） | `--suite checkpoint` 的兩列相減 |
 | **H4** | logits 隨 seq 線性成長，是被低估的大戶 | seq 512→4096：0.75 → 6.00 GiB | `--suite seqlen` 的「logits 理論增量」欄 |
 | **H5** | 活化隨 bs 線性；隨 seq **接近線性**而非 ch01 說的平方 | — | `--suite batch` + `--suite seqlen` 兩張表 |
-| **H6** | 可訓練參數隨掛載層數線性；優化器記憶體相對權重仍是雜訊 | 4/16/48 層 → 約 1.8M/7.1M/21.3M | `--suite lora` |
+| **H6** | 可訓練參數隨掛載層數線性；優化器記憶體相對權重仍是雜訊 | 4/16/42 層 → 約 0.9M/3.5M/9.1M | `--suite lora` |
 
-> 每個 suite 都有一組**釘死的條件**：`checkpoint` 與 `batch` 把 seq 壓到 512。
-> 原因是若用 seq=2048，「不開檢查點」那一端是 25.3 GiB 直接 OOM；連 seq=1024
-> 都要 16.2 GiB，會頂到 24GB 機器**預設**的 ~16 GiB wired limit。
+> **換成 E4B 之後，H3 可以在正式訓練的同一個 seq 上量**：seq=2048 時
+> 不開 16.2 GiB / 開 8.5 GiB，兩端都跑得起來。
+> 原本用 12B 時「不開檢查點」在 seq=2048 是 25.3 GiB 直接 OOM，
+> 只能壓到 seq=512 去量，消融數字和訓練設定對不上。
 > **設計消融時先確認兩端都跑得起來** —— 這正是 ch08 三步驟第一步「先塞進記憶體」
-> 在實務上的意思。
+> 在實務上的意思，而換模型剛好讓這一步變輕鬆。
 >
-> 跑消融前也先放寬上限（`seq=4096` 與 `bs=8` 那兩格會頂到 ~15 GiB）：
+> 跑消融前先放寬上限（「不開檢查點」那格是 16.2 GiB，超過預設的 ~16 GiB）：
 > `sudo sysctl iogpu.wired_limit_mb=20480`
 
 **H5 是最值得寫的一條**。ch01 的公式有個 $\frac{5 n_{heads} \cdot seq}{h}$ 平方項，
-但 Gemma 4 有 40/48 層是視窗只有 1024 的滑動注意力，加上 Flash Attention 不具現化
+但 E4B 有 35/42 層是視窗只有 512 的滑動注意力，加上 Flash Attention 不具現化
 S/P 矩陣 —— 所以實測應該接近線性。**「課本公式在我的架構上不成立，而且我知道為什麼」**
 比「我驗證了課本公式」有價值得多。
 
 ### 順便驗一條 Week 1 沒有的：dense vs MoE 的活化差異
 
-Step 3 算出 12B dense 的活化（15.05 GiB）是 26B MoE（6.11 GiB）的 2.5 倍。
+Step 3 算出 E4B dense 的活化（8.34 GiB）比 26B MoE（6.11 GiB）大 36%，儘管 MoE 的總參數是它的 3.4 倍。
 如果你在租卡時也跑了 26B 的消融，這一組對照就完整了。跑不了就用預測值，
 在報告裡明確標示「26B 這一欄是預測值，未實測」。
 
@@ -535,8 +576,8 @@ Step 3 算出 12B dense 的活化（15.05 GiB）是 26B MoE（6.11 GiB）的 2.5
 
 ```bash
 # 9-1 微調後評測（server 換成融合後的權重）
-mlx_lm.server --model out/gemma4-12b-tw --host 127.0.0.1 --port 1234
-twinkle-eval --config configs/eval_gemma4_12b_tuned.yaml
+mlx_lm.server --model out/gemma4-e4b-tw --host 127.0.0.1 --port 1234
+twinkle-eval --config configs/eval_gemma4_e4b_tuned.yaml
 
 # 9-2 MoE 路由分析（26B-A4B）
 #     第一次一定先看結構，確認 router 模組叫什麼
@@ -582,16 +623,21 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 
 | # | 項目 | 為什麼非 CUDA 不可 | 對應假設 |
 |---|---|---|---|
-| 1 | `torch.cuda.max_memory_allocated()` + PyTorch profiler 量 12B LoRA 的記憶體組成 | MLX 只給總峰值，給不出「權重／活化／優化器」的**逐項拆解** | H1–H4 的右半邊 |
-| 2 | **bf16 LoRA vs 4-bit QLoRA 的準確率對照** | 12B bf16 要 21.6 GiB 權重，24GB 機器塞不下 | **P1、P4** |
-| 3 | CUDA 版的梯度檢查點消融，和 Step 8 的 Metal 版並排 | 證明結論跨後端成立，不是 MLX 的特例 | H3 |
-| 4 | 26B-A4B 的 LoRA（本機跑不動的那條） | 17.1 GiB 太貼邊 | E5 的前置 |
+| 1 | `torch.cuda.max_memory_allocated()` + PyTorch profiler 量 E4B LoRA 的記憶體組成 | MLX 只給總峰值，給不出「權重／活化／優化器」的**逐項拆解** | H1–H4 的右半邊 |
+| 2 | CUDA 版的梯度檢查點消融，和 Step 8 的 Metal 版並排 | 證明結論跨後端成立，不是 MLX 的特例 | H3 |
+| 3 | 開 / 關 Flash Attention 的直接對照 | MLX 沒有這個開關 | **P2** |
+| 4 | 26B-A4B 的 LoRA（本機跑不動的那條） | 17.2 GiB 太貼邊 | E5 的前置 |
 | 5 | 若租到 2 卡：ZeRO-1/2/3 與 DP 實測 | 單機不可能 | **D1–D5** |
+
+> **原本排第 2 的「bf16 vs 4-bit 準確率對照」已經移回本機**（Step 5 + Step 7）——
+> E4B 的 bf16 只要 13.9 GiB，訓練預算 18.7 GiB，24GB 機器放寬 wired limit 就跑得動。
+> 這是換成 E4B 最實際的好處：租卡清單上最重要、也最花時間的那一項不必付錢了。
 
 > **可比性務必寫進報告**：準確率跨硬體可比；吞吐與峰值記憶體**不可比**。
 > Metal 的數字放一欄、CUDA 的數字放另一欄，不要混在同一欄取平均。
 
-**驗收** — 至少完成 1 和 2。第 2 項（bf16 vs 4-bit 掉幾分）是主管最可能問的問題。
+**驗收** — 至少完成 1 和 2。
+至於主管最可能問的「bf16 vs 4-bit 掉幾分」，Step 7 已經在本機做完了，可以先答。
 
 ---
 
@@ -604,10 +650,10 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 
 | 檔案 | 要換掉的 | 換成 |
 |---|---|---|
-| `ch01.md` | 20.9B/3.6B、MXFP4 12.8 GiB、活化 5.6 GiB | 25.23B/3.82B（MoE）與 11.91B dense；4-bit 12.5／5.9 GiB；活化 6.11／15.05 GiB |
-| `ch06.md` | 32 專家取 4、expert 佔 91.4% | **128 專家取 8**、expert 佔 **90.5%**、另有 1 個常駐共享專家 |
-| `ch10.md` | MXFP4 = 4.25 bit、只量化 expert | MLX 通用 4-bit（group_size=64）、**全部線性層一起量化** |
-| `ch02.md` | LoRA 通訊量 16 MB/步 | 用 12B 的 21.3M 可訓練參數重算 |
+| `ch01.md` | 已改成 Gemma 4 版 | 把 dense 那半從 12B 換成 **E4B**：7.46B/3.97B、4-bit 3.7 GiB、活化 8.34/0.63 GiB、LoRA 9.1M |
+| `ch06.md` | 已改成 Gemma 4 版 | 只需把 dense 對照組的數字從 12B 換成 E4B |
+| `ch10.md` | 已改成 Gemma 4 版 | 12B 欄換成 E4B：bf16 13.9 / 4-bit 3.7 GiB；P1/P4 標註改成「**本機可做**」 |
+| `ch02.md` | 已改成 Gemma 4 版 | Ψ 從 11.91B 換成 **7.46B**，LoRA 可訓練參數 21.3M → **9.1M**，通訊量重算 |
 | `ch08.md` | （新增） | 三步驟決策流程 → 你的變因清單 |
 
 **保留 GPT-OSS 的數字作為對照是加分的**，不必全刪。
@@ -630,11 +676,13 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 
 ### 11-3 要跟主管對齊的問題清單
 
-1. **12B 主線 + 26B 對照**這個拆法認可嗎？還是寧可硬上 26B、承擔 OOM 風險？
+1. **E4B 主線 + 26B 對照**這個拆法認可嗎？（原本要用的 12B 因為 mlx-lm 不支援
+   `gemma4_unified` 而換掉；E4B 的好處是每 token 計算量和 26B 的 active 對齊。）
 2. `max_seq_len` 換 tokenizer 後變成 N，和 Week 1 定案的 2048 不同 —— 接受嗎？
-3. bf16 vs 4-bit 的掉點幅度（Step 10 第 2 項）如果超過 X%，要不要改走 bf16 路線？
+3. bf16 vs 4-bit 的掉點幅度（現在本機就能做）如果超過 X%，要不要改走 bf16 路線？
 4. E4（中英路由差異）若成立，Week 3 要不要擴大做成獨立的一節？
-5. 租卡預算 US$2–3 是否核准？要不要一次租 2 卡把 D1–D5 也做掉？
+5. 租卡預算 US$2–3 是否核准？（清單已縮短，bf16 對照移回本機）
+   要不要一次租 2 卡把 D1–D5 也做掉？
 
 ---
 
@@ -660,11 +708,11 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 | ch01 | H3 | 梯度檢查點取捨 | 待驗 | **Step 8 `--suite checkpoint`** |
 | ch01 | H4 | logits 是隱藏大戶 | 待驗 | **Step 8 `--suite seqlen`**（Gemma 262K vocab 更明顯） |
 | ch01 | H5 | 活化成長律 | 待驗 | Step 8 `--suite batch` + `seqlen` |
-| ch01 | H6 | LoRA 掛 expert 的膨脹 | 待驗 | Step 3 算術（MoE 667M vs 11.5M＝**58×**；dense 只有 3.1×）+ Step 8 |
-| ch10 | P1 | bf16 vs 量化記憶體 | 待驗 | **Step 10 租卡**（本機塞不下 bf16） |
+| ch01 | H6 | LoRA 掛 expert 的膨脹 | 待驗 | Step 3 算術（MoE 667M vs 11.5M＝**58×**；E4B dense 只有 3.8×）+ Step 8 |
+| ch10 | P1 | bf16 vs 量化記憶體 | 待驗 | **Step 5 本機**（E4B bf16 只要 13.9 GiB） |
 | ch10 | P2 | Flash Attention 效益 | 待驗 | Step 10 租卡 |
 | ch10 | P3 | 平方項來源 | 待驗 | Step 8 `--suite seqlen` 間接驗 |
-| ch10 | P4 | 量化掉點幅度 | 待驗 | **Step 10 租卡**（4-bit vs bf16 準確率） |
+| ch10 | P4 | 量化掉點幅度 | 待驗 | **Step 7 + 9 本機**（4-bit 與 bf16 各微調一次再評測） |
 | ch02 | D1–D5 | DP / ZeRO | 待租 2 卡 | Step 10 選配；租不到就標記「理論分析，未實測」 |
 | ch06 | E1 | active 比例 | ✅（GPT-OSS） | Step 3 在 Gemma 上重算（3.82/25.23 = **15.1%**） |
 | ch06 | E2 | 推論吞吐 roofline | ✅（GPT-OSS） | **Step 5 重驗，且這次有 dense 對照組** |
@@ -681,33 +729,38 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
    下載大模型時最常見的一個。加 `HF_HUB_DISABLE_XET=1` 退回一般 HTTPS 重跑即可，
    會續傳。Week 1 下載 GPT-OSS 時就踩過同一個坑。
 
-2. **`transformers` 版本不夠新**：Gemma 4 的 chat template 需要 v5+。
+2. **用了 Gemma 4 12B**：`ValueError: Model type gemma4_unified not supported.`
+   mlx-lm 0.31.3 不支援 12B Unified（[issue #1481](https://github.com/ml-explore/mlx-lm/issues/1481)）。
+   用 E4B / 26B-A4B / 31B，它們的 model_type 是 `gemma4`。
+   另注意 mlx-community 的 E4B repo 名稱是**小寫** `gemma-4-e4b-it-4bit`。
+
+3. **`transformers` 版本不夠新**：Gemma 4 的 chat template 需要 v5+。
    症狀是 `apply_chat_template` 不認得 `enable_thinking` 或 `reasoning` 欄位。
    `prepare_data_gemma.py` 的探針會直接中止並告訴你。
 
-3. **`enable_thinking` 訓練與評測不一致**：這是 Week 2 版的頭號地雷。
+4. **`enable_thinking` 訓練與評測不一致**：這是 Week 2 版的頭號地雷。
    訓練資料開了、評測沒開（或反過來），微調前後的差值就不可信。
    兩份評測 config 已經寫死 `true`，不要改。
 
-4. **`max_seq_length` 沿用 Week 1 的 2048**：換 tokenizer 後 token 長度分布會變，
+5. **`max_seq_length` 沿用 Week 1 的 2048**：換 tokenizer 後 token 長度分布會變，
    必須用 Step 4 印出來的涵蓋率重新決定。
 
-5. **26B-A4B 沒調 wired limit 就跑**：症狀是載入到一半當掉或 Metal 報
+6. **26B-A4B 沒調 wired limit 就跑**：症狀是載入到一半當掉或 Metal 報
    `Insufficient Memory`。先 `sudo sysctl iogpu.wired_limit_mb=20480`。
 
-6. **LoRA 不小心掛到 MoE expert 上**：26B 的可訓練參數會從 11.5M 跳到 **667M**
+7. **LoRA 不小心掛到 MoE expert 上**：26B 的可訓練參數會從 11.5M 跳到 **667M**
    （優化器記憶體 0.17 → 9.94 GiB，58 倍），24GB 直接爆。
    `configs/lora_gemma4_26b_moe.yaml` 的 `keys` 只列 attention，不要加 `mlp.*`。
 
-7. **兩份評測 config 不小心改到別的欄位**：`temperature` / `max_tokens` /
+8. **兩份評測 config 不小心改到別的欄位**：`temperature` / `max_tokens` /
    `shuffle_options` / 科目清單都必須一致，只能差 `model.name` 那一行。
 
-8. **`_to_delete/` 太早刪**：等 Step 4 跑完拿到新的 `data/train` 再刪。
+9. **`_to_delete/` 太早刪**：等 Step 4 跑完拿到新的 `data/train` 再刪。
 
-9. **消融跑批會覆寫 adapter**：`run_ablation.py` 寫到 `out/_ablation_tmp`，
-   不會動到 `out/lora-12b`。但**不要在跑正式訓練的同時跑消融** —— 記憶體會打架。
+10. **消融跑批會覆寫 adapter**：`run_ablation.py` 寫到 `out/_ablation_tmp`，
+   不會動到 `out/lora-e4b`。但**不要在跑正式訓練的同時跑消融** —— 記憶體會打架。
 
-10. **`mlx_lm.server` 的 model id**：`curl /v1/models` 看到什麼就在 config 的
+11. **`mlx_lm.server` 的 model id**：`curl /v1/models` 看到什麼就在 config 的
    `model.name` 填什麼，不一致 Twinkle Eval 會 404。
 
 ---
@@ -726,10 +779,10 @@ ultrascale-lab/
 │   ├── run_ablation.py             【新】消融跑批（H3–H6）
 │   └── verify_env.py               （沿用）
 ├── configs/
-│   ├── lora_gemma4_12b.yaml        【新】主線訓練設定
+│   ├── lora_gemma4_e4b.yaml        【新】主線訓練設定（E4B）
 │   ├── lora_gemma4_26b_moe.yaml    【新】MoE 訓練設定（stretch goal）
-│   ├── eval_gemma4_12b_base.yaml   【新】微調前評測
-│   └── eval_gemma4_12b_tuned.yaml  【新】微調後評測
+│   ├── eval_gemma4_e4b_base.yaml   【新】微調前評測
+│   └── eval_gemma4_e4b_tuned.yaml  【新】微調後評測
 ├── reports/                        （Step 3–9 會逐步填滿）
 ├── data/
 │   ├── train/, val/                Step 4 重新產生

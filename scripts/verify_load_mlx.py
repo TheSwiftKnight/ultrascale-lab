@@ -7,24 +7,27 @@ verify_load_mlx.py — 本機（Apple Silicon / MLX）載入驗證 + roofline �
 
   H1  權重記憶體預測 vs Metal 實測峰值，誤差應 <10%
   E2  用記憶體頻寬 roofline 證明 MoE 每 token 只讀 active 參數
-  P4  （選）量化掉點：同一批 prompt 在 4-bit / 8-bit 下的輸出差異
+  P1  bf16 vs 4-bit 的權重記憶體對照（E4B 的 bf16 版本機塞得下，不必租卡）
 
 用法：
-    # 12B dense（本機主線模型）
-    python scripts/verify_load_mlx.py --model mlx-community/gemma-4-12B-it-4bit
+    # E4B dense（本機主線模型）
+    python scripts/verify_load_mlx.py --model mlx-community/gemma-4-e4b-it-4bit
 
     # 26B-A4B MoE（對照組；記憶體貼邊，先看 §0 的 wired limit 說明）
     python scripts/verify_load_mlx.py --model mlx-community/gemma-4-26B-A4B-it-4bit \\
-        --moe --expected-weight-gib 12.4
+        --moe --expected-weight-gib 12.5
 
-    # 兩個都跑並寫出對照報告
+    # 兩個 4-bit 模型都跑並寫出對照報告
     python scripts/verify_load_mlx.py --both
+
+    # P1：E4B 的 bf16 對照（13.9 GiB，24GB 機器跑得起來）
+    python scripts/verify_load_mlx.py --model mlx-community/gemma-4-e4b-it-bf16
 
 輸出：reports/load_verification_gemma.md
 
 §0 24GB 機器的 wired limit
     macOS 預設只讓 GPU 用約 2/3 的統一記憶體（24GB 機器約 16 GiB）。
-    26B-A4B 4-bit 權重就要 12.4 GiB，加上 KV cache 與 buffer pool 會很貼邊。
+    26B-A4B 4-bit 權重就要 12.5 GiB，加上 KV cache 與 buffer pool 會很貼邊。
     跑之前先放寬（重開機後失效，不會永久改動系統）：
         sudo sysctl iogpu.wired_limit_mb=20480
     跑完想還原：
@@ -167,9 +170,9 @@ def roofline(res, args, moe_cfg=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="mlx-community/gemma-4-12B-it-4bit")
+    ap.add_argument("--model", default="mlx-community/gemma-4-e4b-it-4bit")
     ap.add_argument("--both", action="store_true",
-                    help="依序跑 12B dense 與 26B-A4B MoE 並寫出對照表")
+                    help="依序跑 E4B dense 與 26B-A4B MoE（皆 4-bit）並寫出對照表")
     ap.add_argument("--moe", action="store_true", help="這個模型是 MoE（走 MoE roofline）")
     ap.add_argument("--active-frac", type=float, default=None,
                     help="MoE 每 token 讀取的權重比例；不給就用 predict_memory 的預設 0.20")
@@ -184,13 +187,17 @@ def main():
 
     # 兩個模型的預測值（來自 predict_memory_gemma.py，4-bit 全量）
     PRESET = {
-        "mlx-community/gemma-4-12B-it-4bit":
-            dict(moe=False, expected=5.7, active_frac=1.0, label="Gemma 4 12B（dense）"),
+        "mlx-community/gemma-4-e4b-it-4bit":
+            dict(moe=False, expected=3.7, active_frac=1.0, label="Gemma 4 E4B（dense, 4-bit）"),
+        "mlx-community/gemma-4-e4b-it-bf16":
+            dict(moe=False, expected=13.9, active_frac=1.0, label="Gemma 4 E4B（dense, bf16）"),
         "mlx-community/gemma-4-26B-A4B-it-4bit":
-            dict(moe=True, expected=12.4, active_frac=0.20, label="Gemma 4 26B-A4B（MoE）"),
+            dict(moe=True, expected=12.5, active_frac=0.20, label="Gemma 4 26B-A4B（MoE, 4-bit）"),
     }
 
-    targets = list(PRESET) if args.both else [args.model]
+    # --both 只跑 4-bit 的兩個；bf16 版要另外指定（--model ...-bf16）
+    targets = ["mlx-community/gemma-4-e4b-it-4bit",
+               "mlx-community/gemma-4-26B-A4B-it-4bit"] if args.both else [args.model]
     results = []
     for m in targets:
         preset = PRESET.get(m, {})
@@ -269,7 +276,9 @@ def main():
     if len(results) == 2:
         a, b = results[0], results[1]
         A("\n## dense vs MoE 實測對照\n")
-        A("| 指標 | 12B dense | 26B-A4B MoE |")
+        A("> E4B 的非嵌入參數（3.97B）≈ 26B-A4B 的 active（3.82B）—— "
+          "每 token 計算量相當，所以吞吐差異直接反映架構本身。\n")
+        A("| 指標 | E4B dense | 26B-A4B MoE |")
         A("|---|---:|---:|")
         A(f"| 權重實際佔用 | {a['weight_gib']:.2f} GiB | {b['weight_gib']:.2f} GiB |")
         A(f"| 生成峰值 | {a['peak_gib']:.2f} GiB | {b['peak_gib']:.2f} GiB |")

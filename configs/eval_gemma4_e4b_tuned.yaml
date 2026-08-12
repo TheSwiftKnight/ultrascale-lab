@@ -1,19 +1,19 @@
-# Twinkle Eval — Gemma 4 12B 微調後
+# Twinkle Eval — Gemma 4 E4B 微調後
 #
-# 和 eval_gemma4_12b_base.yaml **只有 model.name 一行不同**。
+# 和 eval_gemma4_e4b_base.yaml **只有 model.name 一行不同**。
 # 其他全部必須一模一樣（temperature / max_tokens / enable_thinking /
 # shuffle_options / 科目清單），否則微調前後的差值就不是微調造成的。
 #
 # ── 起 server（先融合 adapter）──────────────────────────────
-#   mlx_lm.fuse --model mlx-community/gemma-4-12B-it-4bit \
-#               --adapter-path out/lora-12b \
-#               --save-path out/gemma4-12b-tw
-#   mlx_lm.server --model out/gemma4-12b-tw --host 127.0.0.1 --port 1234
+#   mlx_lm.fuse --model mlx-community/gemma-4-e4b-it-4bit \
+#               --adapter-path out/lora-e4b \
+#               --save-path out/gemma4-e4b-tw
+#   mlx_lm.server --model out/gemma4-e4b-tw --host 127.0.0.1 --port 1234
 #
-#   （也可以不融合，直接 mlx_lm.server --model <base> --adapter-path out/lora-12b，
+#   （也可以不融合，直接 mlx_lm.server --model <base> --adapter-path out/lora-e4b，
 #     但融合後的權重比較好交付，也才能拿去跑 inspect_router_mlx.py）
 #
-#   twinkle-eval --config configs/eval_gemma4_12b_tuned.yaml
+#   twinkle-eval --config configs/eval_gemma4_e4b_tuned.yaml
 
 llm_api:
   base_url: "http://127.0.0.1:1234/v1"
@@ -24,7 +24,7 @@ llm_api:
   timeout: 600
 
 model:
-  name: "out/gemma4-12b-tw"     # ← 唯一和 base 版不同的一行
+  name: "out/gemma4-e4b-tw"     # ← 唯一和 base 版不同的一行
   temperature: 0.0
   top_p: 1.0
   max_tokens: 2048

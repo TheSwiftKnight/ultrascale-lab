@@ -1,9 +1,9 @@
-# Twinkle Eval — Gemma 4 12B baseline（微調前）
+# Twinkle Eval — Gemma 4 E4B baseline（微調前）
 # 取代 Week 1 的 baseline_lmstudio.yaml（那份打的是 gpt-oss）
 #
 # ── 起 server ────────────────────────────────────────────────
 #   source .venv/bin/activate
-#   mlx_lm.server --model mlx-community/gemma-4-12B-it-4bit \
+#   mlx_lm.server --model mlx-community/gemma-4-e4b-it-4bit \
 #                 --host 127.0.0.1 --port 1234
 #
 #   確認端點活著（順便看 model id 叫什麼，下面 model.name 要一致）：
@@ -11,9 +11,9 @@
 #
 # ── 前置 ─────────────────────────────────────────────────────
 #   twinkle-eval --download-dataset ikala/tmmluplus   # Week 1 已下載過，可略
-#   twinkle-eval --validate --config configs/eval_gemma4_12b_base.yaml
-#   twinkle-eval --dry-run  --config configs/eval_gemma4_12b_base.yaml
-#   twinkle-eval            --config configs/eval_gemma4_12b_base.yaml
+#   twinkle-eval --validate --config configs/eval_gemma4_e4b_base.yaml
+#   twinkle-eval --dry-run  --config configs/eval_gemma4_e4b_base.yaml
+#   twinkle-eval            --config configs/eval_gemma4_e4b_base.yaml
 #
 # ⚠️ 可比性：準確率跨硬體可比；吞吐與峰值記憶體是 Metal 上的數字，
 #    不能和租用 CUDA 卡的並列。
@@ -27,7 +27,7 @@ llm_api:
   timeout: 600
 
 model:
-  name: "mlx-community/gemma-4-12B-it-4bit"
+  name: "mlx-community/gemma-4-e4b-it-4bit"
   temperature: 0.0            # 確定性輸出，baseline 必須
   top_p: 1.0
   max_tokens: 2048            # 開了 thinking 會先產思考內容，不能設太小

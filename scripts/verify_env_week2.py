@@ -20,7 +20,7 @@ GiB = 1024 ** 3
 
 PKGS = [
     ("mlx", "uv pip install -U mlx", "MLX 核心（Apple Silicon）"),
-    ("mlx_lm", "uv pip install -U mlx-lm", "MLX 語言模型（載入/生成/LoRA/server）"),
+    ("mlx_lm", "uv pip install -U mlx-lm", "MLX 語言模型（載入/生成/LoRA/server）—— 需 ≥0.31.3 才有 gemma4"),
     ("transformers", "uv pip install -U 'transformers>=5.0'",
      "tokenizer 與 chat template（Gemma 4 需要 v5+）"),
     ("datasets", "uv pip install -U 'datasets>=2.19'", "資料集"),
@@ -39,16 +39,21 @@ FILES = [
     ("scripts/verify_load_mlx.py", "載入驗證 + roofline"),
     ("scripts/inspect_router_mlx.py", "MoE 路由分析"),
     ("scripts/run_ablation.py", "消融跑批"),
-    ("configs/lora_gemma4_12b.yaml", "12B LoRA 訓練設定"),
-    ("configs/eval_gemma4_12b_base.yaml", "微調前評測設定"),
-    ("configs/eval_gemma4_12b_tuned.yaml", "微調後評測設定"),
+    ("configs/lora_gemma4_e4b.yaml", "E4B LoRA 訓練設定"),
+    ("configs/eval_gemma4_e4b_base.yaml", "微調前評測設定"),
+    ("configs/eval_gemma4_e4b_tuned.yaml", "微調後評測設定"),
     ("datasets/ikala__tmmluplus", "TMMLU+ 資料（Week 1 已下載）"),
 ]
 
 MODELS = [
-    "mlx-community/gemma-4-12B-it-4bit",
+    "mlx-community/gemma-4-e4b-it-4bit",
     "mlx-community/gemma-4-26B-A4B-it-4bit",
 ]
+OPTIONAL_MODELS = [
+    ("mlx-community/gemma-4-e4b-it-bf16", "P1/P4 的 bf16 對照，本機跑得起來"),
+]
+# ⚠️ 不要用 gemma-4-12B —— model_type=gemma4_unified，mlx-lm 0.31.3 不支援
+UNSUPPORTED = ["gemma-4-12B", "gemma-4-12b"]
 
 
 def ok(msg):
@@ -146,7 +151,7 @@ def main():
         total, used, free = shutil.disk_usage(ROOT)
         msg = f"剩餘 {free/GiB:.0f} GiB"
         (ok if free / GiB > 40 else warn)(
-            msg + "（12B 約 7GB + 26B 約 16GB + adapter/checkpoint 約 5GB）")
+            msg + "（E4B 4-bit 約 5GB + bf16 約 16GB + 26B 約 16GB + adapter 約 3GB）")
     except Exception:
         pass
 
@@ -161,6 +166,17 @@ def main():
                     ok(f"{m}  ({have[m]/GiB:.1f} GiB)")
                 else:
                     warn(f"{m} 尚未下載", f"hf download {m}")
+            for m, why in OPTIONAL_MODELS:
+                (ok if m in have else warn)(
+                    f"{m}  ({have[m]/GiB:.1f} GiB)" if m in have
+                    else f"{m} 尚未下載 —— {why}")
+            bad_dl = [r for r in cache.repos
+                      if any(u.lower() in r.repo_id.lower() for u in UNSUPPORTED)]
+            if bad_dl:
+                print()
+                warn("快取裡有 gemma-4-12B —— mlx-lm 0.31.3 載不動"
+                     "（model_type=gemma4_unified, issue #1481）",
+                     "可以刪掉：" + "、".join(f"hf cache delete {r.repo_id}" for r in bad_dl))
             stale = [r for r in cache.repos if "gpt-oss" in r.repo_id.lower()]
             if stale:
                 print()

@@ -1,0 +1,128 @@
+{
+  "config": {
+    "seed": 42,
+    "dataset": "twinkle-ai/tw-reasoning-instruct-50k",
+    "tokenizer": "google/gemma-4-12B-it",
+    "enable_thinking": true,
+    "n_sample": 8000,
+    "val_ratio": 0.05,
+    "minhash": true,
+    "min_chars": 20,
+    "max_chars": 8000
+  },
+  "step1_loaded": 50000,
+  "columns": [
+    "conversations",
+    "input",
+    "output",
+    "think",
+    "seed"
+  ],
+  "step2_clean": 49984,
+  "step2_drop_reasons": {
+    "過長": 16
+  },
+  "step2_suspect_simplified": 56,
+  "step2_suspect_simplified_examples": [
+    [
+      243,
+      30
+    ],
+    [
+      1108,
+      3
+    ],
+    [
+      1663,
+      32
+    ],
+    [
+      2830,
+      5
+    ],
+    [
+      2942,
+      22
+    ],
+    [
+      3463,
+      3
+    ],
+    [
+      3541,
+      8
+    ],
+    [
+      3561,
+      4
+    ],
+    [
+      3848,
+      5
+    ],
+    [
+      4464,
+      10
+    ],
+    [
+      8034,
+      10
+    ],
+    [
+      8875,
+      5
+    ],
+    [
+      10942,
+      9
+    ],
+    [
+      14291,
+      3
+    ],
+    [
+      15245,
+      4
+    ],
+    [
+      16556,
+      32
+    ],
+    [
+      16561,
+      12
+    ],
+    [
+      17608,
+      28
+    ],
+    [
+      17962,
+      4
+    ],
+    [
+      19536,
+      4
+    ]
+  ],
+  "step3_exact": 49968,
+  "step3_minhash": 49965,
+  "step3_dedup": 49965,
+  "step4_token_length": {
+    "mean": 848.6,
+    "p50": 848,
+    "p90": 1250,
+    "p95": 1380,
+    "p99": 1657,
+    "max": 2581,
+    "over_1024": 14152,
+    "over_1536": 1052,
+    "over_2048": 26,
+    "over_4096": 0,
+    "n": 49965
+  },
+  "recommended_max_seq_len": 2048,
+  "step5_sample": 8000,
+  "step5_train": 7600,
+  "step5_val": 400
+}

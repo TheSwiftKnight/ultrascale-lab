@@ -58,7 +58,9 @@ from datasets import load_dataset
 
 # ------------------------------------------------------------------ 常數
 SEED = 42
-TOKENIZER_ID = "google/gemma-4-12B-it"   # 12B 與 26B-A4B 共用同一組 tokenizer/template
+TOKENIZER_ID = "google/gemma-4-E4B-it"   # E4B 與 26B-A4B 共用同一組 tokenizer；
+                                         # 兩者的 chat template 在 enable_thinking=True
+                                         # 這條路徑上輸出完全相同（已逐字比對過）
 DATASET_ID = "twinkle-ai/tw-reasoning-instruct-50k"
 MIN_CHARS, MAX_CHARS = 20, 8000          # 與 Week 1 相同，確保前三步數字可對照
 MINHASH_THRESHOLD = 0.85

@@ -13,17 +13,24 @@
 
 機器是 M4 Pro / 24GB 統一記憶體，這個數字決定了模型配置：
 
-| | Gemma 4 12B Unified | Gemma 4 26B-A4B |
+| | Gemma 4 E4B | Gemma 4 26B-A4B |
 |---|---|---|
-| 架構 | dense，48 層 | MoE，30 層，128 專家取 8 |
-| 總參數 / active | 11.91B / 11.91B | 25.23B / **3.82B** |
-| 4-bit 權重 | 5.9 GiB | 12.5 GiB |
-| 微調預算（seq2048, bs1, ckpt） | **11.2 GiB ✅** | 17.2 GiB ⚠️ |
-| 這個專案的角色 | **微調主線**（訓練 + 消融 + 評測） | **MoE 對照組**（推論 + roofline + 路由分析） |
+| 架構 | dense，42 層 | MoE，30 層，128 專家取 8 |
+| 總參數 | 7.46B | 25.23B |
+| **每 token 實際用到** | **3.97B**（非嵌入） | **3.82B**（active） |
+| 4-bit / bf16 權重 | 3.7 / **13.9** GiB | 12.5 / 47.0 GiB |
+| 微調預算（seq2048, bs1, ckpt） | **8.5 GiB ✅** | 17.2 GiB ⚠️ |
+| 這個專案的角色 | **微調主線**（訓練 + 消融 + 評測 + bf16 對照） | **MoE 對照組**（推論 + roofline + 路由分析） |
 
-26B-A4B 是 GPT-OSS 20B（20.9B/3.6B）的規格替身，所以 Week 1 的 ch06 分析、
-roofline 論證與 E1–E6 假設可以整套沿用；12B 則負責保證這週交付得出微調結果。
-兩者並置多出一組原計畫沒有的 **dense vs MoE 對照**。
+⚠️ **不要用 Gemma 4 12B** —— 它的 `model_type` 是 `gemma4_unified`，
+mlx-lm 0.31.3 不支援（[issue #1481](https://github.com/ml-explore/mlx-lm/issues/1481)）。
+E4B / 26B-A4B / 31B 用的是 `gemma4`，都能跑。
+
+26B-A4B 是 GPT-OSS 20B（20.9B/3.6B）的規格替身，Week 1 的 ch06 分析、
+roofline 論證與 E1–E6 假設可以整套沿用。
+**E4B 的非嵌入參數（3.97B）幾乎等於 26B-A4B 的 active（3.82B）** ——
+每 token 計算量對齊、總參數差 3.4 倍，這是最乾淨的 dense vs MoE 對照。
+E4B 的 bf16 只要 13.9 GiB，所以 P1/P4（bf16 vs 4-bit 掉點）本機就能做完。
 
 ---
 
@@ -40,10 +47,10 @@ ultrascale-lab/
 │   ├── inspect_router_mlx.py      MoE 路由分布（E3 / E4 / E5）
 │   └── run_ablation.py            消融跑批（H3 / H4 / H5 / H6）
 ├── configs/
-│   ├── lora_gemma4_12b.yaml       主線 LoRA 訓練設定
+│   ├── lora_gemma4_e4b.yaml       主線 LoRA 訓練設定
 │   ├── lora_gemma4_26b_moe.yaml   MoE LoRA（stretch goal，24GB 貼邊）
-│   ├── eval_gemma4_12b_base.yaml  Twinkle Eval 微調前
-│   └── eval_gemma4_12b_tuned.yaml Twinkle Eval 微調後（只差 model.name 一行）
+│   ├── eval_gemma4_e4b_base.yaml  Twinkle Eval 微調前
+│   └── eval_gemma4_e4b_tuned.yaml Twinkle Eval 微調後（只差 model.name 一行）
 ├── reports/                       所有可放進簡報的產物
 ├── data/
 │   ├── train/, val/               HF dataset
@@ -70,15 +77,16 @@ uv pip install -U mlx mlx-lm "transformers>=5.0" "datasets>=2.19" \
                   datasketch matplotlib pyyaml twinkle-eval
 python scripts/verify_env_week2.py --check-models
 
-# 2. 下載模型（12B 約 7GB、26B 約 16GB）
-hf download mlx-community/gemma-4-12B-it-4bit
-hf download mlx-community/gemma-4-26B-A4B-it-4bit
+# 2. 下載模型（注意 e4b 小寫；HF_HUB_DISABLE_XET=1 避免 Xet 重組失敗）
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-e4b-it-4bit --max-workers 4       # 5.2 GB
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-26B-A4B-it-4bit --max-workers 4   # 15.4 GB
+HF_HUB_DISABLE_XET=1 hf download mlx-community/gemma-4-e4b-it-bf16 --max-workers 4       # 15.9 GB
 
 # 3. 記憶體預測（不需 GPU，30 秒；--verify-config 會上網核對 config.json）
 python scripts/predict_memory_gemma.py --verify-config
 
 # 4. 資料管線（約 3–5 分鐘）
-#    ⚠️ 跑完把印出來的建議 max_seq_len 填進 configs/lora_gemma4_12b.yaml
+#    ⚠️ 跑完把印出來的建議 max_seq_len 填進 configs/lora_gemma4_e4b.yaml
 python scripts/prepare_data_gemma.py
 
 # 5. 載入驗證 + roofline（兩個模型）
@@ -86,21 +94,21 @@ sudo sysctl iogpu.wired_limit_mb=20480     # 26B 需要
 python scripts/verify_load_mlx.py --both
 
 # 6. Baseline 評測（另開一個終端機起 server）
-mlx_lm.server --model mlx-community/gemma-4-12B-it-4bit --host 127.0.0.1 --port 1234
-twinkle-eval --config configs/eval_gemma4_12b_base.yaml
+mlx_lm.server --model mlx-community/gemma-4-e4b-it-4bit --host 127.0.0.1 --port 1234
+twinkle-eval --config configs/eval_gemma4_e4b_base.yaml
 
 # 7. LoRA 微調（先跑 30 步確認記憶體與速度）
-mlx_lm.lora --config configs/lora_gemma4_12b.yaml --iters 30 --steps-per-report 5
-mlx_lm.lora --config configs/lora_gemma4_12b.yaml
-mlx_lm.fuse --model mlx-community/gemma-4-12B-it-4bit \
-            --adapter-path out/lora-12b --save-path out/gemma4-12b-tw
+mlx_lm.lora --config configs/lora_gemma4_e4b.yaml --iters 30 --steps-per-report 5
+mlx_lm.lora --config configs/lora_gemma4_e4b.yaml
+mlx_lm.fuse --model mlx-community/gemma-4-e4b-it-4bit \
+            --adapter-path out/lora-e4b --save-path out/gemma4-e4b-tw
 
 # 8. 消融
 python scripts/run_ablation.py --suite all --iters 40
 
 # 9. 微調後評測 + 路由分析
-mlx_lm.server --model out/gemma4-12b-tw --host 127.0.0.1 --port 1234
-twinkle-eval --config configs/eval_gemma4_12b_tuned.yaml
+mlx_lm.server --model out/gemma4-e4b-tw --host 127.0.0.1 --port 1234
+twinkle-eval --config configs/eval_gemma4_e4b_tuned.yaml
 python scripts/inspect_router_mlx.py --dump-modules
 python scripts/inspect_router_mlx.py --compare-lang --save reports/router_before.json
 ```
@@ -111,15 +119,15 @@ python scripts/inspect_router_mlx.py --compare-lang --save reports/router_before
 
 ## 三個換模型後最重要的數字
 
-1. **26B-A4B 的 4-bit 權重（12.5 GiB）比 GPT-OSS 的 MXFP4（12.8 GiB）還小**，
-   雖然總參數多 20%。因為 GPT-OSS 只量化 expert，Gemma 走 MLX 通用量化全部一起壓。
-   → 「量化省多少取決於涵蓋範圍，不只取決於位元數」。
+1. **E4B 有 38% 的參數在 Per-Layer Embeddings**（2.82B / 7.46B）。
+   官方標的「4.5B effective / 8B with embeddings」兩個數字都對，只是算的東西不同 ——
+   報告裡要講清楚用的是哪一個。
 
-2. **logits 變成第二大戶**。Gemma 4 vocab = 262,144，比 GPT-OSS 大 30%；
-   seq=2048 時光 logits 就要 3.00 GiB。這是 24GB 機器上最容易 OOM 的地方。
+2. **logits 是第二大戶**。Gemma 4 vocab = 262,144；seq=2048 時 logits 要 3.00 GiB，
+   對 E4B 而言幾乎和權重（3.7 GiB）一樣大，比活化（0.63 GiB）大 5 倍。
 
-3. **dense 的活化比 MoE 大 2.5 倍**（15.05 vs 6.11 GiB @ seq2048）。
-   參數多的那個活化反而小 —— 因為 MoE 每 token 只過 8/128 個專家。
+3. **dense 的活化比 MoE 大**（8.34 vs 6.11 GiB @ seq2048），
+   儘管 MoE 的總參數是它的 3.4 倍 —— 因為 MoE 每 token 只過 8/128 個專家。
 
 ---
 
