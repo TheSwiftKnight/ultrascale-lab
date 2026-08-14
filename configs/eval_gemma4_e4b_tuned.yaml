@@ -35,12 +35,39 @@ model:
       enable_thinking: true
 
 evaluation:
+  # ⚠️ dataset_paths 只吃**目錄**，不吃單一 .parquet 檔。
+  #    Twinkle Eval 的 validate_dataset_path() 會 isdir() 檢查，
+  #    然後 find_all_evaluation_files() 用 os.walk 掃整個目錄。
+  #    所以要只跑幾科，得先做一個只放那幾科的資料夾：
+  #        python scripts/make_eval_subset.py
   dataset_paths:
-    - "datasets/ikala__tmmluplus/geography_of_taiwan.parquet"
-    - "datasets/ikala__tmmluplus/taiwanese_hokkien.parquet"
-    - "datasets/ikala__tmmluplus/three_principles_of_people.parquet"
+    # 【試水溫】3 科：先確認流程正確與單科耗時
+    - "datasets/subsets/tmmluplus_smoke"
+    #
+    # 【正式版】確認時間可接受後，改成下面這行（10 科台灣知識子集）
+    # - "datasets/subsets/tmmluplus_tw10"
+    #
+    # 【全量】66 科全跑（很久，本機不建議）
+    # - "datasets/ikala__tmmluplus"
 
   evaluation_method: "box"
+
+  # ⚠️ 這一段不能省。twinkle_eval 的 system_prompt **沒有預設值**：
+  #    models/openai.py → eval_config.get("system_prompt", {}) → 取不到就送空字串。
+  #    結果是模型完全不知道要輸出 \box{}，會用散文回答，
+  #    然後 BoxExtractor（正則 \\{1,2}box(ed)?{([A-Z])}）抓不到東西，
+  #    predicted_answer 全部 null → 「無法解析 139/139 (100.0%)」。
+  #    8/13 23:55 那次就是踩到這個。
+  system_prompt:
+    zh: |
+      使用者將提供一個題目，並附上選項 A、B、C、D。
+      請仔細閱讀題目要求，根據題意選出最符合的選項，並將選項以以下格式輸出：
+      \box{選項}
+      請確保僅將選項包含在 { } 中，否則將不計算為有效答案。
+      務必精確遵循輸出格式，避免任何多餘內容或錯誤格式。
+      例如：答案是 A，就輸出 \box{A}。
+  system_prompt_enabled: true
+
   datasets_prompt_map: {}
   shuffle_options: true
   repeat_runs: 1

@@ -1,0 +1,50 @@
+[
+  {
+    "label": "LoRA 4 層",
+    "status": "ok",
+    "max_seq_length": 2048,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 4,
+    "loss": 1.992,
+    "it_per_s": 0.413,
+    "s_per_step": 2.421,
+    "tokens_per_s": 351.5,
+    "peak_mem_gb": 7.81,
+    "peak_mem_gib": 7.274,
+    "seconds": 158.9,
+    "n_reports": 6
+  },
+  {
+    "label": "LoRA 16 層",
+    "status": "ok",
+    "max_seq_length": 2048,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": 16,
+    "loss": 1.8033,
+    "it_per_s": 0.311,
+    "s_per_step": 3.215,
+    "tokens_per_s": 264.5,
+    "peak_mem_gb": 7.911,
+    "peak_mem_gib": 7.368,
+    "seconds": 183.3,
+    "n_reports": 6
+  },
+  {
+    "label": "LoRA 全部 42 層",
+    "status": "ok",
+    "max_seq_length": 2048,
+    "batch_size": 1,
+    "grad_checkpoint": true,
+    "num_layers": -1,
+    "loss": 1.5873,
+    "it_per_s": 0.193,
+    "s_per_step": 5.181,
+    "tokens_per_s": 164.3,
+    "peak_mem_gb": 8.236,
+    "peak_mem_gib": 7.67,
+    "seconds": 246.0,
+    "n_reports": 6
+  }
+]

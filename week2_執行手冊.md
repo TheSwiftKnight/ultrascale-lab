@@ -207,6 +207,30 @@ sudo sysctl iogpu.wired_limit_mb=20480
 > `prepare_data_gemma.py` 已經內建這個自動退回機制（`--no-xet`），
 > 但 `hf download` 是 CLI，要自己加環境變數。
 
+> **另一種長得很像、但成因不同的下載失敗：proxy 的 TLS 被切斷**
+>
+> ```
+> httpx.ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING]
+>     EOF occurred in violation of protocol (_ssl.c:1016)
+> ```
+>
+> 看 traceback 有沒有經過 `httpcore/_sync/http_proxy.py` —— 有的話代表你的連線
+> 走 HTTP proxy（公司網路 / VPN 常見），而 proxy 在建立 TLS 時把連線掐掉了。
+> **這和 Xet 無關**，加 `HF_HUB_DISABLE_XET=1` 也治不好。
+>
+> 主因通常是併發太多：`--max-workers 4` 等於同時要 proxy 開 4 條 TLS。
+> 解法是降到 1 條、拉長逾時，並包一個續傳迴圈（`hf download` 本來就會續傳）：
+>
+> ```bash
+> until HF_HUB_DISABLE_XET=1 HF_HUB_DOWNLOAD_TIMEOUT=60 HF_HUB_ETAG_TIMEOUT=60 \
+>       hf download mlx-community/gemma-4-e4b-it-bf16 --max-workers 1; do
+>   echo "斷線，10 秒後續傳…"; sleep 10
+> done
+> ```
+>
+> `huggingface_hub` 內建的 backoff 只重試 5 次、最多等 8 秒，
+> 連線很不穩時會用完；外面包一層 `until` 迴圈才撐得住。
+
 > **關於 `iogpu.wired_limit_mb`**：macOS 預設只讓 GPU 用約 2/3 的統一記憶體
 > （24GB 機器 ≈ 16 GiB）。E4B 的 4-bit 用不到這個，但 26B-A4B 的 12.5 GiB 權重、
 > E4B 的 bf16（13.9 GiB）、以及消融裡「不開檢查點」那一格（16.2 GiB）都會頂到天花板。
@@ -453,6 +477,9 @@ mlx_lm.server --model mlx-community/gemma-4-e4b-it-4bit --host 127.0.0.1 --port 
 ```bash
 source .venv/bin/activate
 
+# ⚠️ 先做科目子集資料夾 —— Twinkle Eval 的 dataset_paths 只吃目錄，不吃單一檔案
+python scripts/make_eval_subset.py
+
 # 確認端點活著，順便看 model id（要和 config 的 model.name 一致）
 curl -s http://127.0.0.1:1234/v1/models | python3 -m json.tool
 
@@ -460,6 +487,27 @@ twinkle-eval --validate --config configs/eval_gemma4_e4b_base.yaml
 twinkle-eval --dry-run  --config configs/eval_gemma4_e4b_base.yaml
 twinkle-eval           --config configs/eval_gemma4_e4b_base.yaml
 ```
+
+> **為什麼要多這一步**：Twinkle Eval 2.8 的 `validate_dataset_path()` 會做
+> `os.path.isdir()` 檢查，把 `.../geography_of_taiwan.parquet` 這種單檔路徑直接擋掉：
+>
+> ```
+> ❌ 資料集 datasets/ikala__tmmluplus/geography_of_taiwan.parquet：
+>    Dataset path is not a directory
+> ```
+>
+> 而它的 `find_all_evaluation_files()` 是用 `os.walk` 掃整個目錄，
+> 所以指向 `datasets/ikala__tmmluplus/` 會一次跑滿 66 科。
+> **要只跑幾科，就得做一個只放那幾科的目錄** ——
+> `make_eval_subset.py` 用相對路徑 symlink 做到（不佔額外磁碟），
+> 並在最後模擬一次 `os.walk` 驗收，確認 Twinkle Eval 真的讀得到。
+>
+> 它會產生兩個子集，換科目只要改 config 裡那一行：
+>
+> | 目錄 | 科目數 | 用途 |
+> |---|---:|---|
+> | `datasets/subsets/tmmluplus_smoke` | 3 | 試水溫，確認流程與單科耗時 |
+> | `datasets/subsets/tmmluplus_tw10` | 10 | 正式報告用（Week 1 定案的台灣知識子集） |
 
 **驗收** — 三科（台灣地理／台語／三民主義）跑完，拿到準確率。
 記錄**單科耗時**，用它推估十科要多久，再決定要不要擴大到正式版的十科。
@@ -734,33 +782,41 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
    用 E4B / 26B-A4B / 31B，它們的 model_type 是 `gemma4`。
    另注意 mlx-community 的 E4B repo 名稱是**小寫** `gemma-4-e4b-it-4bit`。
 
-3. **`transformers` 版本不夠新**：Gemma 4 的 chat template 需要 v5+。
+3. **下載噴 `SSL: UNEXPECTED_EOF_WHILE_READING`**：這是 proxy 切斷 TLS，不是 Xet
+   （看 traceback 有沒有 `http_proxy.py`）。降到 `--max-workers 1`、拉長
+   `HF_HUB_DOWNLOAD_TIMEOUT`，並包 `until ... done` 迴圈續傳。詳見 Step 1 的說明。
+
+4. **評測 config 的 `dataset_paths` 指到單一 `.parquet` 檔**：會噴
+   `Dataset path is not a directory`。Twinkle Eval 只吃目錄 ——
+   先跑 `python scripts/make_eval_subset.py` 做出科目子集資料夾。
+
+5. **`transformers` 版本不夠新**：Gemma 4 的 chat template 需要 v5+。
    症狀是 `apply_chat_template` 不認得 `enable_thinking` 或 `reasoning` 欄位。
    `prepare_data_gemma.py` 的探針會直接中止並告訴你。
 
-4. **`enable_thinking` 訓練與評測不一致**：這是 Week 2 版的頭號地雷。
+6. **`enable_thinking` 訓練與評測不一致**：這是 Week 2 版的頭號地雷。
    訓練資料開了、評測沒開（或反過來），微調前後的差值就不可信。
    兩份評測 config 已經寫死 `true`，不要改。
 
-5. **`max_seq_length` 沿用 Week 1 的 2048**：換 tokenizer 後 token 長度分布會變，
+7. **`max_seq_length` 沿用 Week 1 的 2048**：換 tokenizer 後 token 長度分布會變，
    必須用 Step 4 印出來的涵蓋率重新決定。
 
-6. **26B-A4B 沒調 wired limit 就跑**：症狀是載入到一半當掉或 Metal 報
+8. **26B-A4B 沒調 wired limit 就跑**：症狀是載入到一半當掉或 Metal 報
    `Insufficient Memory`。先 `sudo sysctl iogpu.wired_limit_mb=20480`。
 
-7. **LoRA 不小心掛到 MoE expert 上**：26B 的可訓練參數會從 11.5M 跳到 **667M**
+9. **LoRA 不小心掛到 MoE expert 上**：26B 的可訓練參數會從 11.5M 跳到 **667M**
    （優化器記憶體 0.17 → 9.94 GiB，58 倍），24GB 直接爆。
    `configs/lora_gemma4_26b_moe.yaml` 的 `keys` 只列 attention，不要加 `mlp.*`。
 
-8. **兩份評測 config 不小心改到別的欄位**：`temperature` / `max_tokens` /
+10. **兩份評測 config 不小心改到別的欄位**：`temperature` / `max_tokens` /
    `shuffle_options` / 科目清單都必須一致，只能差 `model.name` 那一行。
 
-9. **`_to_delete/` 太早刪**：等 Step 4 跑完拿到新的 `data/train` 再刪。
+11. **`_to_delete/` 太早刪**：等 Step 4 跑完拿到新的 `data/train` 再刪。
 
-10. **消融跑批會覆寫 adapter**：`run_ablation.py` 寫到 `out/_ablation_tmp`，
+12. **消融跑批會覆寫 adapter**：`run_ablation.py` 寫到 `out/_ablation_tmp`，
    不會動到 `out/lora-e4b`。但**不要在跑正式訓練的同時跑消融** —— 記憶體會打架。
 
-11. **`mlx_lm.server` 的 model id**：`curl /v1/models` 看到什麼就在 config 的
+13. **`mlx_lm.server` 的 model id**：`curl /v1/models` 看到什麼就在 config 的
    `model.name` 填什麼，不一致 Twinkle Eval 會 404。
 
 ---
@@ -777,6 +833,7 @@ ultrascale-lab/
 │   ├── verify_load_mlx.py          【新】取代 verify_load.py，MLX/Metal
 │   ├── inspect_router_mlx.py       【新】取代 inspect_router.py，MLX
 │   ├── run_ablation.py             【新】消融跑批（H3–H6）
+│   ├── make_eval_subset.py         【新】產生 Twinkle Eval 的科目子集目錄
 │   └── verify_env.py               （沿用）
 ├── configs/
 │   ├── lora_gemma4_e4b.yaml        【新】主線訓練設定（E4B）
@@ -784,6 +841,9 @@ ultrascale-lab/
 │   ├── eval_gemma4_e4b_base.yaml   【新】微調前評測
 │   └── eval_gemma4_e4b_tuned.yaml  【新】微調後評測
 ├── reports/                        （Step 3–9 會逐步填滿）
+├── datasets/
+│   ├── ikala__tmmluplus/           66 科原始檔（Week 1 已下載）
+│   └── subsets/                    【新】make_eval_subset.py 產生的科目子集
 ├── data/
 │   ├── train/, val/                Step 4 重新產生
 │   └── mlx/train.jsonl, valid.jsonl【新】MLX 訓練格式

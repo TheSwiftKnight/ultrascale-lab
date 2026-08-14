@@ -1,0 +1,50 @@
+[
+  {
+    "model": "mlx-community/gemma-4-e4b-it-4bit",
+    "load_s": 6.8,
+    "weight_bytes": 4198750292,
+    "weight_gib": 3.910390932112932,
+    "param_elems": 1166568490,
+    "after_load_gib": 3.9129392616450787,
+    "peak_gib": 4.021695364266634,
+    "tok_per_s": 69.1,
+    "sample_output": "<|channel>thought\nHere's a thinking process that leads to the suggested explanation:\n\n1.  **Analyze the Request:** The user wants an explanation of \"Expert Parallelism\" (專家平行) in Traditional Chinese (繁體中文), and a clear differentiation between it and \"Data Parallelism\" (資料平行).\n\n2.  **Define Expert Parallelism (EP):**\n    *   *What is it?* It's a technique used in large-scale AI/ML models (especially those with many parameters, like large language models) to distribute the computational load.\n    *   *How does it work?* Instead of having one massive model, the model is broken down into several s",
+    "label": "Gemma 4 E4B（dense, 4-bit）",
+    "is_moe": false,
+    "expected_weight_gib": 3.7,
+    "h1_error_pct": 8.7,
+    "h1_pass": true,
+    "roofline": {
+      "read_per_token_gb": 4.198750292,
+      "ceiling": 65.01934647558221,
+      "measured": 69.1,
+      "pct_of_ceiling": 106.27606050446887
+    }
+  },
+  {
+    "model": "mlx-community/gemma-4-26B-A4B-it-4bit",
+    "load_s": 10.3,
+    "weight_bytes": 14200055868,
+    "weight_gib": 13.224832590669394,
+    "param_elems": 3944621086,
+    "after_load_gib": 13.227440992370248,
+    "peak_gib": 13.37234104424715,
+    "tok_per_s": 53.6,
+    "sample_output": "<|channel>thought\n\n*   Topic: Expert Parallelism (專家平行).\n*   Comparison: Difference between Expert Parallelism and Data Parallelism (資料平行).\n*   Language: Traditional Chinese (繁體中文).\n\n    *   *Context:* Large Language Models (LLMs), specifically Mixture-of-Experts (MoE) architectures.\n    *   *Core Concept:* Instead of every GPU/worker having the same model parameters, the model is divided into \"experts.\" Each worker/device holds a subset of these experts.\n    *   *Mechanism:* When an input (token) comes in, a router decides which expert it should go to. The input is sent to the specific device",
+    "label": "Gemma 4 26B-A4B（MoE, 4-bit）",
+    "is_moe": true,
+    "expected_weight_gib": 12.5,
+    "h1_error_pct": 7.0,
+    "h1_pass": true,
+    "roofline": {
+      "active_frac": 0.2,
+      "read_per_token_moe_gb": 2.8400111736,
+      "read_per_token_dense_gb": 14.200055868,
+      "ceiling_moe": 96.12638236699082,
+      "ceiling_dense": 19.225276473398168,
+      "measured": 53.6,
+      "pct_of_moe_ceiling": 55.759926338813194,
+      "speedup_vs_dense_ceiling": 2.7879963169406596
+    }
+  }
+]

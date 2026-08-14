@@ -2,18 +2,13 @@
   "config": {
     "seed": 42,
     "dataset": "twinkle-ai/tw-reasoning-instruct-50k",
-    "tokenizer": "google/gemma-4-12B-it",
+    "tokenizer": "google/gemma-4-E4B-it",
     "enable_thinking": true,
     "n_sample": 8000,
     "val_ratio": 0.05,
     "minhash": true,
     "min_chars": 20,
-    "max_chars": 8000,
-    "tokenizer_note": "Gemma 4 全系列共用同一份 tokenizer.json（12B / E4B / 26B-A4B 的 sha256 完全相同：cc8d3a0ce36466cc…，32,169,626 bytes）；chat_template 在 enable_thinking=True 這條路徑上渲染結果逐字相同。因此本次以 12B tokenizer 產生的資料，對 E4B 與 26B-A4B 完全等價，不需重跑。",
-    "applies_to_models": [
-      "gemma-4-e4b-it",
-      "gemma-4-26B-A4B-it"
-    ]
+    "max_chars": 8000
   },
   "step1_loaded": 50000,
   "columns": [

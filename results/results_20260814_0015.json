@@ -1,0 +1,152 @@
+{
+    "timestamp": "20260814_0015",
+    "config": {
+        "llm_api": {
+            "base_url": "http://127.0.0.1:1234/v1",
+            "disable_ssl_verify": false,
+            "api_rate_limit": -1,
+            "max_retries": 3,
+            "timeout": 600,
+            "type": "openai"
+        },
+        "model": {
+            "name": "mlx-community/gemma-4-e4b-it-4bit",
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "max_tokens": 2048,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+            "extra_body": {
+                "chat_template_kwargs": {
+                    "enable_thinking": true
+                }
+            }
+        },
+        "evaluation": {
+            "dataset_paths": [
+                "datasets/subsets/tmmluplus_smoke"
+            ],
+            "evaluation_method": "box",
+            "system_prompt": {
+                "zh": "使用者將提供一個題目，並附上選項 A、B、C、D。\n請仔細閱讀題目要求，根據題意選出最符合的選項，並將選項以以下格式輸出：\n\\box{選項}\n請確保僅將選項包含在 { } 中，否則將不計算為有效答案。\n務必精確遵循輸出格式，避免任何多餘內容或錯誤格式。\n例如：答案是 A，就輸出 \\box{A}。\n"
+            },
+            "system_prompt_enabled": true,
+            "datasets_prompt_map": {},
+            "shuffle_options": true,
+            "repeat_runs": 1,
+            "strategy_config": {},
+            "dataset_overrides": {},
+            "samples_per_question": 1,
+            "pass_k": 1
+        },
+        "logging": {
+            "level": "INFO"
+        },
+        "distributed": {
+            "world_size": 1,
+            "rank": 0
+        },
+        "environment": {
+            "gpu_info": {
+                "model": "Unknown",
+                "count": 1,
+                "memory_gb": 0,
+                "cuda_version": "Unknown",
+                "driver_version": "Unknown"
+            },
+            "parallel_config": {
+                "tp_size": 1,
+                "pp_size": 1
+            },
+            "system_info": {
+                "framework": "Unknown",
+                "python_version": "Unknown",
+                "torch_version": "Unknown",
+                "node_count": 1
+            }
+        }
+    },
+    "dataset_results": {
+        "datasets/subsets/tmmluplus_smoke": {
+            "results": [
+                {
+                    "file": "datasets/subsets/tmmluplus_smoke/three_principles_of_people.parquet",
+                    "accuracy_mean": 0.6546762589928058,
+                    "accuracy_std": 0,
+                    "pass_at_k_mean": 0.6546762589928058,
+                    "pass_metric": "pass@1",
+                    "unparsed_count": 0,
+                    "unparsed_rate": 0.0,
+                    "individual_runs": {
+                        "accuracies": [
+                            0.6546762589928058
+                        ],
+                        "pass_at_k": [
+                            0.6546762589928058
+                        ],
+                        "unparsed_counts": [
+                            0
+                        ],
+                        "results": [
+                            "results/eval_results_20260814_0015_run0.jsonl"
+                        ]
+                    }
+                },
+                {
+                    "file": "datasets/subsets/tmmluplus_smoke/taiwanese_hokkien.parquet",
+                    "accuracy_mean": 0.3333333333333333,
+                    "accuracy_std": 0,
+                    "pass_at_k_mean": 0.3333333333333333,
+                    "pass_metric": "pass@1",
+                    "unparsed_count": 1,
+                    "unparsed_rate": 0.0078,
+                    "individual_runs": {
+                        "accuracies": [
+                            0.3333333333333333
+                        ],
+                        "pass_at_k": [
+                            0.3333333333333333
+                        ],
+                        "unparsed_counts": [
+                            1
+                        ],
+                        "results": [
+                            "results/eval_results_20260814_0015_run0.jsonl"
+                        ]
+                    }
+                },
+                {
+                    "file": "datasets/subsets/tmmluplus_smoke/geography_of_taiwan.parquet",
+                    "accuracy_mean": 0.6315104166666666,
+                    "accuracy_std": 0,
+                    "pass_at_k_mean": 0.6315104166666666,
+                    "pass_metric": "pass@1",
+                    "unparsed_count": 6,
+                    "unparsed_rate": 0.0078,
+                    "individual_runs": {
+                        "accuracies": [
+                            0.6315104166666666
+                        ],
+                        "pass_at_k": [
+                            0.6315104166666666
+                        ],
+                        "unparsed_counts": [
+                            6
+                        ],
+                        "results": [
+                            "results/eval_results_20260814_0015_run0.jsonl"
+                        ]
+                    }
+                }
+            ],
+            "average_accuracy": 0.5398400029976019,
+            "average_std": 0.0,
+            "average_pass_at_k": 0.5398400029976019,
+            "pass_metric": "pass@1",
+            "total_unparsed_count": 7,
+            "average_unparsed_rate": 0.0052,
+            "evaluation_method": "box"
+        }
+    },
+    "duration_seconds": 3573.051413
+}
