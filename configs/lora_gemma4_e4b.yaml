@@ -19,16 +19,16 @@
 #               --save-path out/gemma4-e4b-tw
 #
 # ⚠️ 記憶體預算（predict_memory_gemma.py --model gemma4-e4b --seq 2048 --bs 1）
-#     4-bit 權重 3.7 + LoRA 0.14 + 活化(ckpt) 0.63 + logits 3.00 + 開銷 1.0 = 8.5 GiB ✅
+#     4-bit 權重 3.9 + LoRA 0.14 + 活化(ckpt) 0.63 + logits 3.00 + 開銷 1.0 = 8.7 GiB ✅
 #
 #     E4B 在 24GB 上很寬裕，消融空間比原本的 12B 大得多：
 #
 #       seq   bs  ckpt  精度   活化   logits   合計
-#        512   1   on   4bit   0.16    0.75    5.7 GiB  ✅
-#       2048   1   on   4bit   0.63    3.00    8.5 GiB  ✅ ← 本檔預設
-#       2048   1   off  4bit   8.34    3.00   16.2 GiB  ⚠️ 要調高 wired limit
-#       4096   1   on   4bit   1.25    6.00   12.1 GiB  ✅
-#        512   8   on   4bit   1.28    6.00   12.1 GiB  ✅
+#        512   1   on   4bit   0.16    0.75    6.0 GiB  ✅
+#       2048   1   on   4bit   0.63    3.00    8.7 GiB  ✅ ← 本檔預設
+#       2048   1   off  4bit   8.34    3.00   16.4 GiB  ⚠️ 要調高 wired limit
+#       4096   1   on   4bit   1.25    6.00   12.3 GiB  ✅
+#        512   8   on   4bit   1.28    6.00   12.3 GiB  ✅
 #       2048   1   on   bf16   0.63    3.00   18.7 GiB  ⚠️ 要調高 wired limit
 #
 #     **最後一列是這次換模型最大的收穫**：bf16 LoRA 在本機跑得起來，
@@ -43,12 +43,14 @@ data: "data/mlx"
 
 seed: 42
 
-# LoRA 掛在最上面幾層。-1 = 全部 42 層。
+# LoRA 掛在**最後**幾層（mlx-lm: model.layers[-num_layers:]）。-1 = 全部 42 層。
 # 可訓練參數（attention only, r=16）：4 層≈0.9M / 16 層≈3.5M / 42 層≈9.1M
+# ⚠️ 但那是「四個投影都掛得上」的理論值。實際掛最後 16 層時只有 q/o 掛得上
+#    （見下方 lora_parameters 的說明），實測 adapter 是 2.56M。
 # 先用 16 跑通、量 baseline；消融時再掃 4 / 16 / -1（run_ablation.py --suite lora）。
 num_layers: 16
 
-# E4B 夠小，bs=2 也放得下（seq2048 約 12.1 GiB）。
+# E4B 夠小，bs=2 也放得下（seq2048 約 12.3 GiB）。
 # 先用 1 對齊 26B 的條件，確認流程後可以往上調。
 batch_size: 1
 iters: 1000
@@ -75,9 +77,9 @@ resume_adapter_file: null
 test: false
 test_batches: 100
 
-# 梯度檢查點：E4B 不開也跑得動（16.2 GiB，調高 wired limit 即可），
+# 梯度檢查點：E4B 不開也跑得動（16.4 GiB，調高 wired limit 即可），
 # 所以 H3 可以在**正式訓練的同一個 seq** 上量開關差異，比原本的 12B 乾淨。
-# 正式訓練仍建議開著（8.5 GiB，留餘裕給評測 server 同時開）。
+# 正式訓練仍建議開著（8.7 GiB，留餘裕給評測 server 同時開）。
 grad_checkpoint: true
 
 lora_parameters:
@@ -87,9 +89,17 @@ lora_parameters:
   # 對照：26B MoE 掛到 expert 上是 11.5M → 667.4M（膨脹 58×）—— 這就是 H6 的重點。
   #
   # ⚠️ E4B 的後 18 層（num_kv_shared_layers=18）共用前面算好的 K/V，
-  #    這些層根本沒有 k_proj / v_proj 模組。
-  #    mlx-lm 對找不到的 key 是直接略過（tuner/utils.py），不會報錯，
-  #    所以照列是安全的 —— k/v 的 adapter 只會作用在前 24 層。
+  #    也就是 layer 24–41 根本沒有 k_proj / v_proj 模組。
+  #    mlx-lm 對找不到的 key 是直接略過（tuner/utils.py），不會報錯。
+  #    所以在 num_layers: 16（= layer 26–41）的設定下，
+  #    **k_proj / v_proj 一層都掛不上，實際訓練的只有 q_proj + o_proj**。
+  #    要讓 k/v 真的生效，num_layers 必須 >= 18（才會涵蓋到 layer 23 以前）。
+  #
+  # ⚠️ scale 是**直接乘數**，不是 alpha/rank。mlx_lm/tuner/lora.py:
+  #        return y + (self.scale * z)
+  #    所以 scale: 20.0 等於 HF PEFT 的 lora_alpha = scale × rank = 320
+  #    （PEFT 的 scaling = lora_alpha / r）。業界常用的 scaling 是 2.0。
+  #    20.0 是 mlx-lm 的預設值，但它比常規強 10 倍 —— 改動前先想清楚。
   keys:
     - "self_attn.q_proj"
     - "self_attn.k_proj"

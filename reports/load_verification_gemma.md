@@ -9,8 +9,8 @@
 
 | 模型 | 預測（4-bit） | 載入後 | 生成峰值 | 誤差 | 判定 |
 |---|---:|---:|---:|---:|---|
-| Gemma 4 E4B（dense, 4-bit） | 3.70 GiB | 3.91 GiB | 4.02 GiB | +8.7% | ✅ |
-| Gemma 4 26B-A4B（MoE, 4-bit） | 12.50 GiB | 13.23 GiB | 13.37 GiB | +7.0% | ✅ |
+| Gemma 4 E4B（dense, 4-bit） | 3.91 GiB | 3.91 GiB | 4.02 GiB | −0.0% | ✅ |
+| Gemma 4 26B-A4B（MoE, 4-bit） | 13.22 GiB | 13.23 GiB | 13.37 GiB | −0.0% | ✅ |
 
 ## E2 — 記憶體頻寬 roofline
 
@@ -51,8 +51,8 @@
     "tok_per_s": 69.1,
     "label": "Gemma 4 E4B（dense, 4-bit）",
     "is_moe": false,
-    "expected_weight_gib": 3.7,
-    "h1_error_pct": 8.7,
+    "expected_weight_gib": 3.91,
+    "h1_error_pct": -0.0,
     "h1_pass": true,
     "roofline": {
       "read_per_token_gb": 4.198750292,
@@ -72,8 +72,8 @@
     "tok_per_s": 53.6,
     "label": "Gemma 4 26B-A4B（MoE, 4-bit）",
     "is_moe": true,
-    "expected_weight_gib": 12.5,
-    "h1_error_pct": 7.0,
+    "expected_weight_gib": 13.22,
+    "h1_error_pct": -0.0,
     "h1_pass": true,
     "roofline": {
       "active_frac": 0.2,

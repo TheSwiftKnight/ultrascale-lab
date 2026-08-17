@@ -14,7 +14,7 @@
 
 MLX 權重：`mlx-community/gemma-4-e4b-it-4bit`　bf16：`mlx-community/gemma-4-e4b-it-bf16`
 
-設定：seq=1024, batch=1, LoRA rank=16, target=attn
+設定：seq=2048, batch=1, LoRA rank=16, target=attn
 
 
 ## 一、參數量驗算
@@ -39,8 +39,8 @@ MLX 權重：`mlx-community/gemma-4-e4b-it-4bit`　bf16：`mlx-community/gemma-4
 |---|---:|---:|---|
 | bf16 全精度 | 2.000 | **13.9 GiB** | ⚠️ 貼邊 |
 | 8-bit（MLX q8） | 1.062 | **7.4 GiB** | ✅ 有餘裕 |
-| 4-bit body + 8-bit embed | 0.780 | **5.4 GiB** | ✅ 有餘裕 |
-| 4-bit 全量（MLX 預設，group_size=64） | 0.531 | **3.7 GiB** | ✅ 有餘裕 |
+| 4-bit body + 8-bit embed | 0.796 | **5.5 GiB** | ✅ 有餘裕 |
+| 4-bit 全量（MLX 預設，group_size=64） | 0.562 | **3.9 GiB** | ✅ 有餘裕 |
 
 > 交叉驗證：HF repo 上 4-bit 版實際 5.2 GB （= 4.8 GiB）、bf16 版 15.9 GB。比預測略高，差額是視覺／音訊塔（本表未計）。
 
@@ -61,25 +61,25 @@ dense 只有 42 組 FFN，膨脹幅度遠小於 MoE —— 這正是 dense vs Mo
 
 | 情境 | 活化記憶體 | 說明 |
 |---|---:|---|
-| ch01 原始公式直接代入 | 5.1 GiB | 高估，架構假設不符 |
-| 修正後，**無** Flash Attention | 4.94 GiB | S/P 矩陣要落地 |
-| 修正後，**有** Flash Attention | 4.17 GiB | ch10：不具現化 S/P |
-| 修正後，Flash + full checkpointing | 0.31 GiB | ch01：以算換記憶體 |
+| ch01 原始公式直接代入 | 13.5 GiB | 高估，架構假設不符 |
+| 修正後，**無** Flash Attention | 10.31 GiB | S/P 矩陣要落地 |
+| 修正後，**有** Flash Attention | 8.34 GiB | ch10：不具現化 S/P |
+| 修正後，Flash + full checkpointing | 0.63 GiB | ch01：以算換記憶體 |
 
 修正的地方：35/42 層的注意力視窗只有 512 個 token；KV 只有 2 頭（GQA）
 ；且後 18 層共用前面的 K/V，連投影都沒有
 .
 
 
-## 五、24GB 統一記憶體的預算表（seq=1024, bs=1）
+## 五、24GB 統一記憶體的預算表（seq=2048, bs=1）
 
-> ⚠️ **logits 是最容易被忽略的一項**：vocab=262,144，seq=1024 時光 logits 就要 1.50 GiB，隨 seq 與 bs 線性成長。這是 H4 的量測點。
+> ⚠️ **logits 是最容易被忽略的一項**：vocab=262,144，seq=2048 時光 logits 就要 3.00 GiB，隨 seq 與 bs 線性成長。這是 H4 的量測點。
 
 | 配置 | 權重 | LoRA | 活化 | logits | 框架開銷 | 合計 | 24GB 判定 |
 |---|---:|---:|---:|---:|---:|---:|---|
-| 4-bit + Flash，不開 checkpointing | 3.7 | 0.14 | 4.17 | 1.50 | 1.0 | **10.5 GiB** | ✅ 安全 |
-| 4-bit + Flash + full checkpointing | 3.7 | 0.14 | 0.31 | 1.50 | 1.0 | **6.6 GiB** | ✅ 安全 |
-| bf16 + Flash + full checkpointing | 13.9 | 0.14 | 0.31 | 1.50 | 1.0 | **16.8 GiB** | ⚠️ 需調高 wired limit |
+| 4-bit + Flash，不開 checkpointing | 3.9 | 0.14 | 8.34 | 3.00 | 1.0 | **16.4 GiB** | ⚠️ 需調高 wired limit |
+| 4-bit + Flash + full checkpointing | 3.9 | 0.14 | 0.63 | 3.00 | 1.0 | **8.7 GiB** | ✅ 安全 |
+| bf16 + Flash + full checkpointing | 13.9 | 0.14 | 0.63 | 3.00 | 1.0 | **18.7 GiB** | ⚠️ 需調高 wired limit |
 
 ---
 
@@ -87,7 +87,7 @@ dense 只有 42 組 FFN，膨脹幅度遠小於 MoE —— 這正是 dense vs Mo
 
 MLX 權重：`mlx-community/gemma-4-26B-A4B-it-4bit`
 
-設定：seq=1024, batch=1, LoRA rank=16, target=attn
+設定：seq=2048, batch=1, LoRA rank=16, target=attn
 
 
 ## 一、參數量驗算
@@ -112,8 +112,8 @@ MLX 權重：`mlx-community/gemma-4-26B-A4B-it-4bit`
 |---|---:|---:|---|
 | bf16 全精度 | 2.000 | **47.0 GiB** | ❌ 放不下 |
 | 8-bit（MLX q8） | 1.062 | **25.0 GiB** | ❌ 放不下 |
-| 4-bit body + 8-bit embed | 0.547 | **12.8 GiB** | ⚠️ 貼邊 |
-| 4-bit 全量（MLX 預設，group_size=64） | 0.531 | **12.5 GiB** | ⚠️ 貼邊 |
+| 4-bit body + 8-bit embed | 0.577 | **13.6 GiB** | ⚠️ 貼邊 |
+| 4-bit 全量（MLX 預設，group_size=64） | 0.562 | **13.2 GiB** | ⚠️ 貼邊 |
 
 ## 三、Q2：LoRA 的優化器狀態
 
@@ -131,25 +131,25 @@ MLX 權重：`mlx-community/gemma-4-26B-A4B-it-4bit`
 
 | 情境 | 活化記憶體 | 說明 |
 |---|---:|---|
-| ch01 原始公式直接代入 | 5.1 GiB | 高估，架構假設不符 |
-| 修正後，**無** Flash Attention | 4.93 GiB | S/P 矩陣要落地 |
-| 修正後，**有** Flash Attention | 3.06 GiB | ch10：不具現化 S/P |
-| 修正後，Flash + full checkpointing | 0.27 GiB | ch01：以算換記憶體 |
+| ch01 原始公式直接代入 | 14.9 GiB | 高估，架構假設不符 |
+| 修正後，**無** Flash Attention | 10.49 GiB | S/P 矩陣要落地 |
+| 修正後，**有** Flash Attention | 6.11 GiB | ch10：不具現化 S/P |
+| 修正後，Flash + full checkpointing | 0.54 GiB | ch01：以算換記憶體 |
 
 修正的地方：25/30 層的注意力視窗只有 1024 個 token；KV 只有 8 頭（GQA）
 ；MoE 每 token 只過 8/128 個專家，**活化跟著 active 3.8B 走**
 .
 
 
-## 五、24GB 統一記憶體的預算表（seq=1024, bs=1）
+## 五、24GB 統一記憶體的預算表（seq=2048, bs=1）
 
-> ⚠️ **logits 是最容易被忽略的一項**：vocab=262,144，seq=1024 時光 logits 就要 1.50 GiB，隨 seq 與 bs 線性成長。這是 H4 的量測點。
+> ⚠️ **logits 是最容易被忽略的一項**：vocab=262,144，seq=2048 時光 logits 就要 3.00 GiB，隨 seq 與 bs 線性成長。這是 H4 的量測點。
 
 | 配置 | 權重 | LoRA | 活化 | logits | 框架開銷 | 合計 | 24GB 判定 |
 |---|---:|---:|---:|---:|---:|---:|---|
-| 4-bit + Flash，不開 checkpointing | 12.5 | 0.17 | 3.06 | 1.50 | 1.0 | **18.2 GiB** | ⚠️ 需調高 wired limit |
-| 4-bit + Flash + full checkpointing | 12.5 | 0.17 | 0.27 | 1.50 | 1.0 | **15.4 GiB** | ⚠️ 需調高 wired limit |
-| bf16 + Flash + full checkpointing | 47.0 | 0.17 | 0.27 | 1.50 | 1.0 | **49.9 GiB** | ❌ OOM |
+| 4-bit + Flash，不開 checkpointing | 13.2 | 0.17 | 6.11 | 3.00 | 1.0 | **23.5 GiB** | ❌ OOM |
+| 4-bit + Flash + full checkpointing | 13.2 | 0.17 | 0.54 | 3.00 | 1.0 | **17.9 GiB** | ⚠️ 需調高 wired limit |
+| bf16 + Flash + full checkpointing | 47.0 | 0.17 | 0.54 | 3.00 | 1.0 | **51.7 GiB** | ❌ OOM |
 
 ---
 
@@ -161,10 +161,10 @@ MLX 權重：`mlx-community/gemma-4-26B-A4B-it-4bit`
 |---|---:|---:|---|
 | 總參數 | 7.46B | 25.23B | MoE 大 3.4× |
 | 每 token 實際用到 | 3.97B（非嵌入） | 3.82B（active） | **幾乎相同** |
-| 4-bit 權重 | 3.7 GiB | 12.5 GiB | dense 小 3.4× |
+| 4-bit 權重 | 3.9 GiB | 13.2 GiB | dense 小 3.4× |
 | bf16 權重 | 13.9 GiB | 47.0 GiB | E4B **本機塞得下**，26B 不行 |
-| 活化（Flash, 無 ckpt） | 4.17 GiB | 3.06 GiB | MoE 小 |
+| 活化（Flash, 無 ckpt） | 8.34 GiB | 6.11 GiB | MoE 小 |
 | LoRA(attn) 可訓練參數 | 9.1M | 11.5M | — |
 | LoRA 掛到 FFN 的膨脹 | 3.8× | 58.1× | MoE 兇 15 倍 |
 
-**要回答的問題**：在每 token 計算量相同的前提下，MoE 多花 8.8 GiB 的記憶體養 25B 參數，換到多少準確率？用微調前後的 TMMLU+ 與實測吞吐回答。
+**要回答的問題**：在每 token 計算量相同的前提下，MoE 多花 9.3 GiB 的記憶體養 25B 參數，換到多少準確率？用微調前後的 TMMLU+ 與實測吞吐回答。

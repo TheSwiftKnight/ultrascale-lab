@@ -18,8 +18,8 @@
 | 架構 | dense，42 層 | MoE，30 層，128 專家取 8 |
 | 總參數 | 7.46B | 25.23B |
 | **每 token 實際用到** | **3.97B**（非嵌入） | **3.82B**（active） |
-| 4-bit / bf16 權重 | 3.7 / **13.9** GiB | 12.5 / 47.0 GiB |
-| 微調預算（seq2048, bs1, ckpt） | **8.5 GiB ✅** | 17.2 GiB ⚠️ |
+| 4-bit / bf16 權重 | 3.91 / **13.9** GiB | 13.22 / 47.0 GiB |
+| 微調預算（seq2048, bs1, ckpt） | **8.7 GiB ✅** | 17.9 GiB ⚠️ |
 | 這個專案的角色 | **微調主線**（訓練 + 消融 + 評測 + bf16 對照） | **MoE 對照組**（推論 + roofline + 路由分析） |
 
 ⚠️ **不要用 Gemma 4 12B** —— 它的 `model_type` 是 `gemma4_unified`，
@@ -124,7 +124,7 @@ python scripts/inspect_router_mlx.py --compare-lang --save reports/router_before
    報告裡要講清楚用的是哪一個。
 
 2. **logits 是第二大戶**。Gemma 4 vocab = 262,144；seq=2048 時 logits 要 3.00 GiB，
-   對 E4B 而言幾乎和權重（3.7 GiB）一樣大，比活化（0.63 GiB）大 5 倍。
+   對 E4B 而言幾乎和權重（3.91 GiB）一樣大，比活化（0.63 GiB）大 5 倍。
 
 3. **dense 的活化比 MoE 大**（8.34 vs 6.11 GiB @ seq2048），
    儘管 MoE 的總參數是它的 3.4 倍 —— 因為 MoE 每 token 只過 8/128 個專家。

@@ -49,14 +49,14 @@ E4B / 26B-A4B / 31B 都是 `gemma4`，全部能跑。所以 dense 那一側改�
 | 架構 | **dense**，42 層 | **MoE**，30 層，128 專家取 8 |
 | 總參數（公式算） | 7.46B（官方 8B with embeddings） | 25.23B（官方 25.2B，誤差 **0.1%**） |
 | **每 token 實際用到** | **3.97B**（非嵌入） | **3.82B**（active） |
-| 4-bit 權重 | **3.7 GiB** | 12.5 GiB |
+| 4-bit 權重 | **3.91 GiB** | 13.22 GiB |
 | bf16 權重 | **13.9 GiB**（本機塞得下！） | 47.0 GiB |
-| 微調總預算（seq2048, bs1, 開檢查點） | **8.5 GiB ✅** | 17.2 GiB ⚠️ |
+| 微調總預算（seq2048, bs1, 開檢查點） | **8.7 GiB ✅** | 17.9 GiB ⚠️ |
 
 **換成 E4B 反而讓對照更乾淨。** E4B 的非嵌入參數 3.97B 和 26B-A4B 的 active 3.82B
 幾乎一樣 —— 兩者**每 token 的計算量相當**，總參數卻差 3.4 倍。
 於是「MoE 到底買到了什麼」變成一個可以乾淨量測的問題：
-同樣的每 token 計算量，多花 8.8 GiB 記憶體養 25B 參數，換到多少準確率？
+同樣的每 token 計算量，多花 9.3 GiB 記憶體養 25B 參數，換到多少準確率？
 
 **另一個意外收穫**：E4B 的 bf16 只要 13.9 GiB，
 **P1 / P4（bf16 vs 4-bit 的記憶體與掉點）不必租卡就能在本機做完** ——
@@ -65,18 +65,18 @@ E4B / 26B-A4B / 31B 都是 `gemma4`，全部能跑。所以 dense 那一側改�
 26B-A4B 的 25.2B total / 3.8B active 對上 GPT-OSS 的 20.9B / 3.6B，
 連 MoE 佔全模型 90% 參數這件事都一樣 ——
 Week 1 建立的 ch06 分析、roofline 論證、E1–E6 假設**全部可以搬過來**。
-但它在 24GB 上微調太貼邊（17.2 GiB，要手動放寬 GPU wired limit），所以只做推論。
+但它在 24GB 上微調太貼邊（17.9 GiB，要手動放寬 GPU wired limit），所以只做推論。
 
 Week 2 拆成兩條線：
 
 ```
 主線 A（本機，寬裕）
-  Gemma 4 E4B dense · 4-bit LoRA（8.5 GiB）
+  Gemma 4 E4B dense · 4-bit LoRA（8.7 GiB）
   → 微調 + 四組消融 + 微調前後 TMMLU+ + bf16/4-bit 對照
      ← 這條線交付「Week 2 有做出東西」，而且 P1/P4 也在這裡完成
 
 主線 B（本機，只做推論）
-  Gemma 4 26B-A4B MoE · 4-bit（12.5 GiB）
+  Gemma 4 26B-A4B MoE · 4-bit（13.22 GiB）
   → 載入驗證 + roofline + 路由分析   ← 接住 Week 1 的 ch06 敘事
 
 租卡 2–4 小時（48GB）—— 清單比原本短了
@@ -232,8 +232,8 @@ sudo sysctl iogpu.wired_limit_mb=20480
 > 連線很不穩時會用完；外面包一層 `until` 迴圈才撐得住。
 
 > **關於 `iogpu.wired_limit_mb`**：macOS 預設只讓 GPU 用約 2/3 的統一記憶體
-> （24GB 機器 ≈ 16 GiB）。E4B 的 4-bit 用不到這個，但 26B-A4B 的 12.5 GiB 權重、
-> E4B 的 bf16（13.9 GiB）、以及消融裡「不開檢查點」那一格（16.2 GiB）都會頂到天花板。
+> （24GB 機器 ≈ 16 GiB）。E4B 的 4-bit 用不到這個，但 26B-A4B 的 13.22 GiB 權重、
+> E4B 的 bf16（13.9 GiB）、以及消融裡「不開檢查點」那一格（16.4 GiB）都會頂到天花板。
 > 調到 20480（20 GiB）是安全值；**不要超過 21504**，
 > 再上去系統會開始換頁，反而更慢甚至當掉。還原：`sudo sysctl iogpu.wired_limit_mb=0`。
 
@@ -318,16 +318,16 @@ E4B 在 24GB 上的完整預算（bs=1）：
 
 | seq | bs | 精度 | 檢查點 | 活化 | logits | 合計 | 判定 |
 |---:|---:|---|---|---:|---:|---:|---|
-| 512 | 1 | 4-bit | 開 | 0.16 | 0.75 | 5.7 GiB | ✅ |
-| 2048 | 1 | 4-bit | 開 | 0.63 | 3.00 | **8.5 GiB** | ✅ ← 主線設定 |
-| 4096 | 1 | 4-bit | 開 | 1.25 | 6.00 | 12.1 GiB | ✅ |
-| 512 | 8 | 4-bit | 開 | 1.28 | 6.00 | 12.1 GiB | ✅ |
-| 2048 | 1 | 4-bit | **關** | 8.34 | 3.00 | 16.2 GiB | ⚠️ 需 wired limit |
+| 512 | 1 | 4-bit | 開 | 0.16 | 0.75 | 6.0 GiB | ✅ |
+| 2048 | 1 | 4-bit | 開 | 0.63 | 3.00 | **8.7 GiB** | ✅ ← 主線設定 |
+| 4096 | 1 | 4-bit | 開 | 1.25 | 6.00 | 12.3 GiB | ✅ |
+| 512 | 8 | 4-bit | 開 | 1.28 | 6.00 | 12.3 GiB | ✅ |
+| 2048 | 1 | 4-bit | **關** | 8.34 | 3.00 | 16.4 GiB | ⚠️ 需 wired limit |
 | 2048 | 1 | **bf16** | 開 | 0.63 | 3.00 | **18.7 GiB** | ⚠️ 需 wired limit |
 
 **和原本的 12B 比，E4B 讓整個 Week 2 寬鬆很多**：
 
-- 主線只用 8.5 GiB，還有一半記憶體可以同時開評測 server。
+- 主線只用 8.7 GiB，還有一半記憶體可以同時開評測 server。
 - **H3（梯度檢查點）可以在正式訓練的同一個 seq=2048 上量**，
   不必為了讓兩端都跑得起來而壓低 seq —— 消融數字直接對得上訓練數字。
 - seq 掃到 4096、bs 掃到 8 都不會 OOM，H4/H5 的曲線更完整。
@@ -441,7 +441,7 @@ python scripts/verify_load_mlx.py --both --bandwidth 273
 
 **驗收**
 
-- H1：實測峰值 vs 預測（E4B 3.7 GiB / 26B 12.5 GiB）誤差 <10%
+- H1：實測峰值 vs 預測（E4B 3.91 GiB / 26B 13.22 GiB）誤差 <10%
 - E2：26B 的實測 tok/s 應該落在「MoE 理論上限的 70–85%」，
   且明顯高於「假設 dense 時的理論上限」
 - `reports/load_verification_gemma.md` 產出
@@ -452,7 +452,7 @@ python scripts/verify_load_mlx.py --both --bandwidth 273
 
 ### 這一步的看點
 
-E4B dense 每 token 要讀 **全部** 3.7 GiB 權重（其中 PLE 查表只讀命中的那幾列，
+E4B dense 每 token 要讀 **全部** 3.91 GiB 權重（其中 PLE 查表只讀命中的那幾列，
 實際更少），26B MoE 只讀約 20%（約 2.5 GiB）。
 兩者的每 token 讀取量落在同一個量級 —— 所以**吞吐應該接近**，而這正是 E4B/26B 這組配對的意義：計算量對齊，差別只在總參數與記憶體。如果實測真是這樣，
 E2 就從「算術上 active 比較小」升級成「物理上真的只搬了那麼多位元組」。
@@ -547,8 +547,8 @@ mlx_lm.fuse --model mlx-community/gemma-4-e4b-it-4bit \
 mlx_lm.lora --config configs/lora_gemma4_e4b.yaml --iters 30 --steps-per-report 5
 ```
 
-看那行 `Peak mem X.XXX GB`，和 `predict_memory_gemma.py` 算的 **8.5 GiB** 比對
-（注意 mlx 印的是 GB 十進位，8.5 GiB = 9.1 GB）。
+看那行 `Peak mem X.XXX GB`，和 `predict_memory_gemma.py` 算的 **8.7 GiB** 比對
+（注意 mlx 印的是 GB 十進位，8.7 GiB = 9.34 GB）。
 差太多先查清楚再跑滿 1000 步 —— 這也順便完成了 H1 在**訓練**情境下的驗證
 （Step 5 驗的是推論情境）。
 
@@ -594,13 +594,13 @@ python scripts/run_ablation.py --suite all --iters 40
 | **H6** | 可訓練參數隨掛載層數線性；優化器記憶體相對權重仍是雜訊 | 4/16/42 層 → 約 0.9M/3.5M/9.1M | `--suite lora` |
 
 > **換成 E4B 之後，H3 可以在正式訓練的同一個 seq 上量**：seq=2048 時
-> 不開 16.2 GiB / 開 8.5 GiB，兩端都跑得起來。
+> 不開 16.4 GiB / 開 8.7 GiB，兩端都跑得起來。
 > 原本用 12B 時「不開檢查點」在 seq=2048 是 25.3 GiB 直接 OOM，
 > 只能壓到 seq=512 去量，消融數字和訓練設定對不上。
 > **設計消融時先確認兩端都跑得起來** —— 這正是 ch08 三步驟第一步「先塞進記憶體」
 > 在實務上的意思，而換模型剛好讓這一步變輕鬆。
 >
-> 跑消融前先放寬上限（「不開檢查點」那格是 16.2 GiB，超過預設的 ~16 GiB）：
+> 跑消融前先放寬上限（「不開檢查點」那格是 16.4 GiB，超過預設的 ~16 GiB）：
 > `sudo sysctl iogpu.wired_limit_mb=20480`
 
 **H5 是最值得寫的一條**。ch01 的公式有個 $\frac{5 n_{heads} \cdot seq}{h}$ 平方項，
@@ -674,7 +674,7 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 | 1 | `torch.cuda.max_memory_allocated()` + PyTorch profiler 量 E4B LoRA 的記憶體組成 | MLX 只給總峰值，給不出「權重／活化／優化器」的**逐項拆解** | H1–H4 的右半邊 |
 | 2 | CUDA 版的梯度檢查點消融，和 Step 8 的 Metal 版並排 | 證明結論跨後端成立，不是 MLX 的特例 | H3 |
 | 3 | 開 / 關 Flash Attention 的直接對照 | MLX 沒有這個開關 | **P2** |
-| 4 | 26B-A4B 的 LoRA（本機跑不動的那條） | 17.2 GiB 太貼邊 | E5 的前置 |
+| 4 | 26B-A4B 的 LoRA（本機跑不動的那條） | 17.9 GiB 太貼邊 | E5 的前置 |
 | 5 | 若租到 2 卡：ZeRO-1/2/3 與 DP 實測 | 單機不可能 | **D1–D5** |
 
 > **原本排第 2 的「bf16 vs 4-bit 準確率對照」已經移回本機**（Step 5 + Step 7）——
@@ -698,9 +698,9 @@ E4 問的是：**同樣語意、不同語言的 prompt，在 MoE 裡走的專家
 
 | 檔案 | 要換掉的 | 換成 |
 |---|---|---|
-| `ch01.md` | 已改成 Gemma 4 版 | 把 dense 那半從 12B 換成 **E4B**：7.46B/3.97B、4-bit 3.7 GiB、活化 8.34/0.63 GiB、LoRA 9.1M |
+| `ch01.md` | 已改成 Gemma 4 版 | 把 dense 那半從 12B 換成 **E4B**：7.46B/3.97B、4-bit 3.91 GiB、活化 8.34/0.63 GiB、LoRA 9.1M |
 | `ch06.md` | 已改成 Gemma 4 版 | 只需把 dense 對照組的數字從 12B 換成 E4B |
-| `ch10.md` | 已改成 Gemma 4 版 | 12B 欄換成 E4B：bf16 13.9 / 4-bit 3.7 GiB；P1/P4 標註改成「**本機可做**」 |
+| `ch10.md` | 已改成 Gemma 4 版 | 12B 欄換成 E4B：bf16 13.9 / 4-bit 3.91 GiB；P1/P4 標註改成「**本機可做**」 |
 | `ch02.md` | 已改成 Gemma 4 版 | Ψ 從 11.91B 換成 **7.46B**，LoRA 可訓練參數 21.3M → **9.1M**，通訊量重算 |
 | `ch08.md` | （新增） | 三步驟決策流程 → 你的變因清單 |
 

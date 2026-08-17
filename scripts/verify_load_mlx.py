@@ -15,7 +15,7 @@ verify_load_mlx.py — 本機（Apple Silicon / MLX）載入驗證 + roofline �
 
     # 26B-A4B MoE（對照組；記憶體貼邊，先看 §0 的 wired limit 說明）
     python scripts/verify_load_mlx.py --model mlx-community/gemma-4-26B-A4B-it-4bit \\
-        --moe --expected-weight-gib 12.5
+        --moe --expected-weight-gib 13.22
 
     # 兩個 4-bit 模型都跑並寫出對照報告
     python scripts/verify_load_mlx.py --both
@@ -27,7 +27,7 @@ verify_load_mlx.py — 本機（Apple Silicon / MLX）載入驗證 + roofline �
 
 §0 24GB 機器的 wired limit
     macOS 預設只讓 GPU 用約 2/3 的統一記憶體（24GB 機器約 16 GiB）。
-    26B-A4B 4-bit 權重就要 12.5 GiB，加上 KV cache 與 buffer pool 會很貼邊。
+    26B-A4B 4-bit 權重就要 13.22 GiB，加上 KV cache 與 buffer pool 會很貼邊。
     跑之前先放寬（重開機後失效，不會永久改動系統）：
         sudo sysctl iogpu.wired_limit_mb=20480
     跑完想還原：
@@ -188,11 +188,11 @@ def main():
     # 兩個模型的預測值（來自 predict_memory_gemma.py，4-bit 全量）
     PRESET = {
         "mlx-community/gemma-4-e4b-it-4bit":
-            dict(moe=False, expected=3.7, active_frac=1.0, label="Gemma 4 E4B（dense, 4-bit）"),
+            dict(moe=False, expected=3.91, active_frac=1.0, label="Gemma 4 E4B（dense, 4-bit）"),
         "mlx-community/gemma-4-e4b-it-bf16":
             dict(moe=False, expected=13.9, active_frac=1.0, label="Gemma 4 E4B（dense, bf16）"),
         "mlx-community/gemma-4-26B-A4B-it-4bit":
-            dict(moe=True, expected=12.5, active_frac=0.20, label="Gemma 4 26B-A4B（MoE, 4-bit）"),
+            dict(moe=True, expected=13.22, active_frac=0.20, label="Gemma 4 26B-A4B（MoE, 4-bit）"),
     }
 
     # --both 只跑 4-bit 的兩個；bf16 版要另外指定（--model ...-bf16）

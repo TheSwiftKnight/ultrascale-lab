@@ -175,16 +175,18 @@ def weight_memory(c, p):
     """
     四種載入方式的權重記憶體。
 
-    MLX 的 4-bit（group_size=64）：4 bit 權重 + 每 64 個元素一組 scale/bias(fp16)
-    → 4.25 bit/參數 = 0.531 byte。**所有線性層一起壓**，沒有排除清單。
+    MLX 的 4-bit（group_size=64）：4 bit 權重 + 每 64 個元素一組 scale 和 bias，
+    兩者都是 bf16（各 2 bytes）→ 4 + (2+2)*8/64 = 4.50 bit/參數 = 0.5625 byte。
+    **所有線性層一起壓**，沒有排除清單。
+    （對帳：out/gemma4-e4b-tw/model.safetensors 實測 4.501 bit/參數。）
     """
     total, embed = p["total"], p["embed"] + p["embed_ple"]
     body = total - embed
     return dict(
         bf16=total * 2,
         q8=total * 8.5 / 8,
-        q4_e8=body * 4.25 / 8 + embed * 8.5 / 8,
-        q4=total * 4.25 / 8,
+        q4_e8=body * 4.50 / 8 + embed * 8.5 / 8,
+        q4=total * 4.50 / 8,
     )
 
 
