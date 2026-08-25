@@ -1,0 +1,36 @@
+{
+  "key": "ar",
+  "model": "mlx-community/gemma-4-26B-A4B-it-4bit",
+  "load_seconds": 5.3,
+  "after_load_gib": 13.23,
+  "peak_gib": 13.37,
+  "tok_per_s": 55.8,
+  "max_tokens": 256,
+  "runs": [
+    {
+      "prompt": "請用大約兩百字介紹台灣的夜市文化。",
+      "n_tokens": 241,
+      "seconds": 7.62,
+      "tok_per_s": 31.64
+    },
+    {
+      "prompt": "解釋什麼是動態規劃，並舉一個例子。",
+      "n_tokens": 256,
+      "seconds": 3.48,
+      "tok_per_s": 73.46
+    },
+    {
+      "prompt": "寫一段 Python 程式碼，讀取 CS",
+      "n_tokens": 255,
+      "seconds": 3.49,
+      "tok_per_s": 73.02
+    },
+    {
+      "prompt": "說明梅雨季節對台灣水資源的影響。",
+      "n_tokens": 256,
+      "seconds": 3.48,
+      "tok_per_s": 73.53
+    }
+  ],
+  "note": "單一 session、單一請求；跨硬體不可比"
+}

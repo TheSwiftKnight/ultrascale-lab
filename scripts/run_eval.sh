@@ -16,9 +16,17 @@ set -euo pipefail
 
 MODE="${1:-}"
 case "$MODE" in
-  base)  MODEL="mlx-community/gemma-4-e4b-it-4bit"; CFG="configs/eval_gemma4_e4b_base.yaml" ;;
-  tuned) MODEL="out/gemma4-e4b-tw";                 CFG="configs/eval_gemma4_e4b_tuned.yaml" ;;
-  *) echo "用法：bash scripts/run_eval.sh [base|tuned]"; exit 1 ;;
+  base)  MODEL="mlx-community/gemma-4-e4b-it-4bit"; CFG="configs/eval_gemma4_e4b_base.yaml"; TAG="base" ;;
+  tuned) MODEL="out/gemma4-e4b-tw";                 CFG="configs/eval_gemma4_e4b_tuned.yaml"; TAG="tuned" ;;
+  custom)
+    # 給 sweep_checkpoints.sh 用：模型與 config 都由呼叫端指定，不寫死。
+    MODEL="${2:-}"; CFG="${3:-}"
+    if [[ -z "$MODEL" || -z "$CFG" ]]; then
+      echo "用法：bash scripts/run_eval.sh custom <模型路徑> <config.yaml>"; exit 1
+    fi
+    TAG="$(basename "$MODEL")"
+    ;;
+  *) echo "用法：bash scripts/run_eval.sh [base|tuned|custom <模型> <config>]"; exit 1 ;;
 esac
 
 PORT=1234
@@ -26,6 +34,25 @@ HOST=127.0.0.1
 URL="http://${HOST}:${PORT}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+# ── 0. config 與 server 的模型必須是同一個 ───────────────────────
+# 這一關是後來補的。原因：mlx_lm.server 起哪個模型是由 --model 決定，
+# 而 twinkle-eval 只是把 config 的 model.name 當字串送進 API —— server
+# 對 model id 照單全收，不會比對。所以「config 指到 A、server 起的是 B」
+# 完全不會報錯，只會安靜地評測到錯的模型。
+# checkpoint 掃描那種一次跑五個模型的情境，沒有這一關會五份結果全一樣。
+CFG_MODEL="$(python3 -c "
+import sys, yaml
+print(yaml.safe_load(open(sys.argv[1]))['model']['name'])
+" "$CFG")"
+if [[ "$CFG_MODEL" != "$MODEL" ]]; then
+  echo "❌ 模型不一致，中止："
+  echo "   本腳本會用 --model '$MODEL' 起 server"
+  echo "   但 $CFG 的 model.name 是 '$CFG_MODEL'"
+  echo "   → 兩者必須相同，否則會評測到錯的模型而且不會有任何錯誤訊息。"
+  exit 1
+fi
+echo "▶ 模型對帳通過：$MODEL"
 
 # ── 1. 代理 ───────────────────────────────────────────────────────
 # 這兩行就是 8/13 那 4,144 個 502 的解法。httpx / requests / openai 都吃這個變數。
@@ -51,17 +78,17 @@ else
   echo "   沒人在聽，我來起 server。"
   mkdir -p logs
   nohup mlx_lm.server --model "$MODEL" --host "$HOST" --port "$PORT" \
-        > "logs/server_${MODE}.log" 2>&1 &
-  echo $! > "/tmp/mlxserver_${MODE}.pid"
+        > "logs/server_${TAG}.log" 2>&1 &
+  echo $! > "/tmp/mlxserver_${TAG}.pid"
   KILL_AFTER=1
-  echo "   PID $(cat /tmp/mlxserver_${MODE}.pid)，log 在 logs/server_${MODE}.log"
+  echo "   PID $(cat /tmp/mlxserver_${TAG}.pid)，log 在 logs/server_${TAG}.log"
 fi
 
 cleanup() {
-  if [[ "${KILL_AFTER:-0}" == "1" && -f "/tmp/mlxserver_${MODE}.pid" ]]; then
-    echo; echo "▶ 收掉 server PID $(cat /tmp/mlxserver_${MODE}.pid)"
-    kill "$(cat /tmp/mlxserver_${MODE}.pid)" 2>/dev/null || true
-    rm -f "/tmp/mlxserver_${MODE}.pid"
+  if [[ "${KILL_AFTER:-0}" == "1" && -f "/tmp/mlxserver_${TAG}.pid" ]]; then
+    echo; echo "▶ 收掉 server PID $(cat /tmp/mlxserver_${TAG}.pid)"
+    kill "$(cat /tmp/mlxserver_${TAG}.pid)" 2>/dev/null || true
+    rm -f "/tmp/mlxserver_${TAG}.pid"
   fi
 }
 trap cleanup EXIT
@@ -77,20 +104,44 @@ for i in $(seq 1 90); do
 done
 echo
 if [[ "$CODE" != "200" ]]; then
-  echo "❌ /v1/models 回 $CODE（等了 180 秒）。看 logs/server_${MODE}.log。"
+  echo "❌ /v1/models 回 ${CODE}（等了 180 秒）。看 logs/server_${TAG}.log。"
   exit 1
 fi
 
 echo "▶ server 上的 model id："
-curl -s "${URL}/v1/models" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-ids=[m.get('id') for m in d.get('data',[])]
-for i in ids: print('   -',i)
-want='''$MODEL'''
-if want not in ids:
-    print(f'''\n⚠️  config 裡寫的是 {want}，但 server 報的是 {ids}''')
-    print('   → mlx_lm.server 通常照單全收，不一定會擋；但如果評測回 404，就是這裡不合。')
+if [[ "${ALLOW_MODEL_ID_MISMATCH:-0}" == "1" ]]; then echo "   （已略過 model id 對帳）"; fi
+curl -s "${URL}/v1/models" | WANT="$MODEL" ALLOW="${ALLOW_MODEL_ID_MISMATCH:-0}" python3 -c "
+import json, sys, os
+from pathlib import Path
+
+d = json.load(sys.stdin)
+ids = [m.get('id') for m in d.get('data', [])]
+want = os.environ['WANT']
+
+# mlx_lm.server 會把本機模型的 id 報成**絕對路徑**，而我們傳的是相對路徑，
+# 而且它還會把 HF 快取裡的其他模型一起列出來。所以不能直接做字串比對，
+# 要先把看起來像路徑的 id 正規化成絕對路徑再比。
+def norm(x):
+    try:
+        p = Path(x).expanduser()
+        if p.exists():
+            return str(p.resolve())
+    except OSError:
+        pass
+    return x
+
+want_n = norm(want)
+ids_n = [norm(i) for i in ids]
+for i, n in zip(ids, ids_n):
+    mark = '  ← 這個' if n == want_n else ''
+    print(f'   - {i}{mark}')
+
+if want_n not in ids_n and os.environ.get('ALLOW') != '1':
+    print(f'\n❌ 要評測的是 {want}')
+    print(f'   正規化後 = {want_n}')
+    print( '   但 server 上沒有這個模型。可能是前一輪的 server 還沒收掉，或 :1234 被別人佔著。')
+    print( '   → 確定要照跑就設 ALLOW_MODEL_ID_MISMATCH=1。')
+    sys.exit(1)
 "
 
 # ── 4. 送一題探路（最重要的一關）────────────────────────────────
@@ -111,7 +162,7 @@ echo "   smoke 子集 = 1,036 題（geography 768 / hokkien 129 / three_principl
 echo "   8/13 實測 4.85 秒/題 → 一輪約 84 分鐘。可以先去做別的事。"
 echo "   中途想看進度：tail -f logs/\$(ls -t logs | head -1)"
 echo
-time twinkle-eval --config "$CFG" 2>&1 | tee "logs/eval_${MODE}_run.log"
+time twinkle-eval --config "$CFG" 2>&1 | tee "logs/eval_${TAG}_run.log"
 
 echo
 echo "▶ 產出："

@@ -1,0 +1,41 @@
+{
+  "key": "dlm",
+  "model": "diffusiongemma-26B-A4B-it-Q4_K_M.gguf",
+  "engine": "llama.cpp Q4_K_M",
+  "load_seconds": null,
+  "after_load_gib": null,
+  "peak_gib": 18.62,
+  "tok_per_s": 13.5,
+  "max_tokens": 256,
+  "runs": [
+    {
+      "prompt": "請用大約兩百字介紹台灣的夜市文化。",
+      "tok_per_s": 10.8,
+      "wall_seconds": 41.0,
+      "returncode": 0,
+      "log": "/Users/kaitsao/Projects/ultrascale-lab/reports/week4/llama_logs/dlm_0.log"
+    },
+    {
+      "prompt": "解釋什麼是動態規劃，並舉一個例子。",
+      "tok_per_s": 15.1,
+      "wall_seconds": 27.1,
+      "returncode": 0,
+      "log": "/Users/kaitsao/Projects/ultrascale-lab/reports/week4/llama_logs/dlm_1.log"
+    },
+    {
+      "prompt": "寫一段 Python 程式碼，讀取 CS",
+      "tok_per_s": 15.9,
+      "wall_seconds": 21.3,
+      "returncode": 0,
+      "log": "/Users/kaitsao/Projects/ultrascale-lab/reports/week4/llama_logs/dlm_2.log"
+    },
+    {
+      "prompt": "說明梅雨季節對台灣水資源的影響。",
+      "tok_per_s": 12.3,
+      "wall_seconds": 25.7,
+      "returncode": 0,
+      "log": "/Users/kaitsao/Projects/ultrascale-lab/reports/week4/llama_logs/dlm_3.log"
+    }
+  ],
+  "note": "峰值=子行程 RSS（含 mmap 頁面，量法與 MLX 的 metal API 不同）；跨 engine/量化格式數字要標註，不可直接並列"
+}

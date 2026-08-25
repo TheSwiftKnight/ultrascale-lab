@@ -1,0 +1,34 @@
+# Week 4 方案 A — attention-only LoRA 全 30 層（MoE 主線的基準線）
+# 由 make_week4_configs.py 產生；預測可訓練參數 11.49M
+# ⚠️ v_proj 在 full_attention 層會被靜默略過（上面盤點過的缺席層），這是預期行為。
+model: "mlx-community/gemma-4-26B-A4B-it-4bit"
+train: true
+data: "data/mlx"
+seed: 42
+num_layers: 30
+batch_size: 1
+iters: 200
+max_seq_length: 1024
+learning_rate: 1e-4
+lr_schedule:
+  name: cosine_decay
+  warmup: 20
+  warmup_init: 1e-6
+  arguments: [1e-4, 200, 1e-6]
+steps_per_report: 10
+steps_per_eval: 50
+val_batches: 10
+save_every: 100
+resume_adapter_file: null
+test: false
+grad_checkpoint: true
+adapter_path: "out/week4-26b-planA"
+lora_parameters:
+  keys:
+    - "self_attn.q_proj"
+    - "self_attn.k_proj"
+    - "self_attn.v_proj"
+    - "self_attn.o_proj"
+  rank: 16
+  scale: 2.0   # 直接乘數；2.0 = 業界常規（Week 2 誤用 20 的教訓）
+  dropout: 0.0

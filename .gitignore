@@ -1,5 +1,6 @@
 .venv/
 data/
+models/dlm-gguf/*.gguf
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
@@ -7,3 +8,7 @@ Eval/
 results/
 *.log
 out/
+configs/_sweep/
+results/sweep/
+out/ckpt-*/
+out/fused-*/

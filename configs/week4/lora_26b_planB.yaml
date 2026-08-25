@@ -1,0 +1,33 @@
+# Week 4 方案 B — router-only LoRA（機制二分：路由問題 vs 能力問題）
+# 由 make_week4_configs.py 產生；預測可訓練參數 2.83M
+# 注意：這是 LoRA(r=32) 而非全參數 —— router 矩陣 out=128，
+#       r=32 已能表達 128 維輸出空間的 1/4，夠做機制二分；報告要註明這個限制。
+# expert / attention 全凍結：mlx_lm.lora 只會訓練 keys 指到的 adapter。
+model: "mlx-community/gemma-4-26B-A4B-it-4bit"
+train: true
+data: "data/mlx"
+seed: 42
+num_layers: 30
+batch_size: 1
+iters: 200
+max_seq_length: 1024
+learning_rate: 1e-4
+lr_schedule:
+  name: cosine_decay
+  warmup: 20
+  warmup_init: 1e-6
+  arguments: [1e-4, 200, 1e-6]
+steps_per_report: 10
+steps_per_eval: 50
+val_batches: 10
+save_every: 100
+resume_adapter_file: null
+test: false
+grad_checkpoint: true
+adapter_path: "out/week4-26b-planB"
+lora_parameters:
+  keys:
+    - "router.proj"
+  rank: 32
+  scale: 2.0
+  dropout: 0.0
